@@ -35,24 +35,18 @@ type renderCtx struct {
 	// instead of `i = 1`). Replaces the older structural heuristic in
 	// groupNeedsSpacing.
 	compact bool
-	// cache memoizes measure results for the duration of one render
-	// pass, keyed by node pointer × compact flag. Lifted out of the
-	// canvas so that copies of the ctx (via withCompact) share state.
-	cache measureCache
 }
 
-// withCompact returns a copy of the context with compact=true. The
-// cache pointer is preserved so memoization spans both compact and
-// non-compact measurements within the same pass.
+// withCompact returns a copy of the context with compact=true.
 func (c renderCtx) withCompact() renderCtx {
 	c.compact = true
 	return c
 }
 
 // newRenderCtx wraps a [Style] in a fresh render context with no
-// derived state set and a fresh measurement cache.
+// derived state set. Measurement memoization lives on the AST node.
 func newRenderCtx(s Style) renderCtx {
-	return renderCtx{Style: s, cache: newMeasureCache()}
+	return renderCtx{Style: s}
 }
 
 // displayValue returns v as it should appear in output for this style:
@@ -63,29 +57,6 @@ func (s renderCtx) displayValue(v string) string {
 		return asciify(v)
 	}
 	return v
-}
-
-// measureCache memoizes [box] results across a render pass. Keyed by
-// (node pointer, compact flag) — the only ctx field that varies during
-// a single pass.
-type cacheKey struct {
-	n       *node
-	compact bool
-}
-
-type measureCache map[cacheKey]box
-
-func newMeasureCache() measureCache {
-	return make(measureCache)
-}
-
-func (m measureCache) get(n *node, compact bool) (box, bool) {
-	b, ok := m[cacheKey{n, compact}]
-	return b, ok
-}
-
-func (m measureCache) put(n *node, compact bool, b box) {
-	m[cacheKey{n, compact}] = b
 }
 
 // ANSI escape sequences

@@ -3,6 +3,7 @@ package termtex
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 )
@@ -56,10 +57,28 @@ type lexer struct {
 	tokens []token
 }
 
-func lex(input string) []token {
-	l := &lexer{input: input}
+// tokensPool recycles token slices across lex() calls. The slice grows
+// to the largest expression seen and stays parked between calls.
+var tokensPool = sync.Pool{
+	New: func() any {
+		s := make([]token, 0, 64)
+		return &s
+	},
+}
+
+func lex(input string) *[]token {
+	tp := tokensPool.Get().(*[]token)
+	*tp = (*tp)[:0]
+	l := &lexer{input: input, tokens: *tp}
 	l.run()
-	return l.tokens
+	*tp = l.tokens
+	return tp
+}
+
+// releaseTokens returns a slice obtained from lex() to the pool. The
+// caller must not reference the slice after calling.
+func releaseTokens(tp *[]token) {
+	tokensPool.Put(tp)
 }
 
 // peek returns the rune at the current position and its UTF-8 byte
@@ -293,9 +312,10 @@ type parser struct {
 // the AST is intentionally not part of the public API — callers go
 // through [Render] / [Expand].
 func parse(input string) (*node, error) {
-	tokens := lex(input)
-	p := &parser{tokens: tokens}
+	tp := lex(input)
+	p := &parser{tokens: *tp}
 	node, err := p.parseExpr()
+	releaseTokens(tp)
 	if err != nil {
 		return nil, err
 	}

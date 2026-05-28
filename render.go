@@ -2,6 +2,7 @@ package termtex
 
 import (
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -14,23 +15,63 @@ type cell struct {
 	color  string // ANSI escape, empty for no color
 }
 
-// canvas is a 2D character buffer for compositing output.
+// canvas is a 2D character buffer for compositing output. Backed by a
+// contiguous []cell with row stride = width — one allocation per
+// canvas, recycled through canvasPool.
 type canvas struct {
-	cells  [][]cell
+	cells  []cell
 	width  int
 	height int
 	ctx    renderCtx
 }
 
-func newCanvas(w, h int) *canvas {
-	cells := make([][]cell, h)
-	for i := range cells {
-		cells[i] = make([]cell, w)
-		for j := range cells[i] {
-			cells[i][j] = cell{ch: ' '}
-		}
+var canvasPool = sync.Pool{
+	New: func() any { return &canvas{} },
+}
+
+// spaceCells is a long buffer of blank cells used as the source for
+// copy()-based canvas clearing. Sized to cover the largest expected
+// canvas; copy() trims to whatever target we hand it.
+var spaceCells = func() []cell {
+	s := make([]cell, 4096)
+	blank := cell{ch: ' '}
+	for i := range s {
+		s[i] = blank
 	}
-	return &canvas{cells: cells, width: w, height: h}
+	return s
+}()
+
+func newCanvas(w, h int) *canvas {
+	if w < 0 {
+		w = 0
+	}
+	if h < 0 {
+		h = 0
+	}
+	c := canvasPool.Get().(*canvas)
+	size := w * h
+	if cap(c.cells) < size {
+		c.cells = make([]cell, size)
+	} else {
+		c.cells = c.cells[:size]
+	}
+	// Fast clear: copy from a pre-blanked buffer in chunks. cheaper
+	// than a per-cell assignment loop because copy() turns into a
+	// runtime memmove.
+	for off := 0; off < size; {
+		n := copy(c.cells[off:], spaceCells)
+		off += n
+	}
+	c.width = w
+	c.height = h
+	c.ctx = renderCtx{}
+	return c
+}
+
+// release returns the canvas to the pool. The caller must not
+// reference its cells slice after calling.
+func (c *canvas) release() {
+	canvasPool.Put(c)
 }
 
 func (c *canvas) set(x, y int, r rune) {
@@ -39,7 +80,7 @@ func (c *canvas) set(x, y int, r rune) {
 
 func (c *canvas) setColored(x, y int, r rune, color string) {
 	if y >= 0 && y < c.height && x >= 0 && x < c.width {
-		c.cells[y][x] = cell{ch: r, color: color}
+		c.cells[y*c.width+x] = cell{ch: r, color: color}
 	}
 }
 
@@ -58,7 +99,7 @@ func (c *canvas) withCompactCtx(fn func()) {
 // String() so terminals render it on top of the existing character.
 func (c *canvas) setAccent(x, y int, mark rune) {
 	if y >= 0 && y < c.height && x >= 0 && x < c.width {
-		c.cells[y][x].accent = mark
+		c.cells[y*c.width+x].accent = mark
 	}
 }
 
@@ -99,11 +140,16 @@ func (c *canvas) vlineColored(x, y, h int, ch rune, color string) {
 // String renders the canvas to a string, trimming trailing whitespace per line.
 func (c *canvas) String() string {
 	var sb strings.Builder
+	// Heuristic preallocation: most cells are 1-3 UTF-8 bytes; aim for
+	// width*height with a small overhead, plus newlines.
+	sb.Grow(c.width*c.height + c.height)
 	useColor := c.ctx.Color
-	for i, row := range c.cells {
+	w := c.width
+	for i := 0; i < c.height; i++ {
 		if i > 0 {
 			sb.WriteByte('\n')
 		}
+		row := c.cells[i*w : (i+1)*w]
 		// Find last non-space
 		last := len(row) - 1
 		for last >= 0 && row[last].ch == ' ' {

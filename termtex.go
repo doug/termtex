@@ -56,5 +56,7 @@ func Render(input string, style Style) (string, error) {
 	c := newCanvas(b.Width, b.Height)
 	c.ctx = ctx
 	renderNode(c, n, 0, 0)
-	return c.String(), nil
+	out := c.String()
+	c.release()
+	return out, nil
 }

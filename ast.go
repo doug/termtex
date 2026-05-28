@@ -40,6 +40,14 @@ type node struct {
 
 	// For nodeSpace: width in cells (0 is meaningful — see \!)
 	Width int
+
+	// Per-pass measurement cache. Each Render call runs against a
+	// fresh AST, so storing the result on the node itself avoids a
+	// map allocation per pass and a hash lookup per measure() call.
+	// boxes[0] = non-compact box, boxes[1] = compact box. measured
+	// bit 0/1 tells which slot is populated.
+	boxes    [2]box
+	measured uint8
 }
 
 // Helper constructors

@@ -23,138 +23,110 @@ func isEscaped(md string, i int) bool {
 //
 // The result can be passed to glamour or any other terminal markdown
 // renderer.
+//
+// Within a single Expand call, the same math expression is only
+// rendered once — repeated occurrences hit a per-call cache. This
+// matters in practice: a typical AI-conversation transcript or paper
+// uses the same handful of expressions (\alpha, x_i, f(x), ...) many
+// times.
 func Expand(md string, style Style) string {
-	// Process display math first ($$...$$) to avoid matching inside them
-	md = processDisplayMath(md, style)
-	// Then inline math ($...$)
-	md = processInlineMath(md, style)
-	return md
-}
-
-// processDisplayMath replaces `$$...$$` blocks (possibly spanning
-// multiple lines) with fenced code blocks containing the rendered
-// output. A backslash-escaped `\$$...$$` is preserved as literal, to
-// match the inline-math path.
-func processDisplayMath(md string, style Style) string {
-	var sb strings.Builder
-	sb.Grow(len(md))
-	i := 0
-	for i < len(md) {
-		if i+1 >= len(md) || md[i] != '$' || md[i+1] != '$' {
-			sb.WriteByte(md[i])
-			i++
-			continue
+	// Sentinel: empty value cached on parse error so a malformed
+	// repeat-expression still costs only one lookup, not a re-parse.
+	cache := make(map[string]string)
+	tryRender := func(expr string) (string, bool) {
+		if r, ok := cache[expr]; ok {
+			return r, r != ""
 		}
-		if isEscaped(md, i) {
-			sb.WriteByte(md[i])
-			i++
-			continue
-		}
-		end := strings.Index(md[i+2:], "$$")
-		if end < 0 {
-			sb.WriteByte(md[i])
-			i++
-			continue
-		}
-		end += i + 2
-		expr := strings.TrimSpace(md[i+2 : end])
-		if expr == "" {
-			sb.WriteString(md[i : end+2])
-			i = end + 2
-			continue
-		}
-		rendered, err := Render(expr, style)
+		r, err := Render(expr, style)
 		if err != nil {
-			sb.WriteString(md[i : end+2])
-			i = end + 2
-			continue
+			cache[expr] = ""
+			return "", false
 		}
-		sb.WriteString("\n```\n")
-		sb.WriteString(rendered)
-		sb.WriteString("\n```\n")
-		i = end + 2
+		cache[expr] = r
+		return r, true
 	}
-	return sb.String()
-}
 
-// processInlineMath replaces `$...$` math runs with their rendered
-// output. The three Pandoc rules apply: the opener can't be followed
-// by whitespace, the closer can't be preceded by whitespace, and the
-// closer can't be followed by an ASCII digit. Together, those make
-// "I'll give you $3 dollars if you give me $5" pass through as prose.
-// A backslash-escaped `$` is treated as a literal.
-func processInlineMath(md string, style Style) string {
 	var sb strings.Builder
 	sb.Grow(len(md))
 	i := 0
-	for i < len(md) {
-		if md[i] != '$' {
-			sb.WriteByte(md[i])
-			i++
-			continue
-		}
-		// Backslash-escaped `$` is a literal.
-		if isEscaped(md, i) {
-			sb.WriteByte(md[i])
-			i++
-			continue
-		}
-		// `$$` (display math) was handled earlier; leave any leftovers alone.
-		if i+1 < len(md) && md[i+1] == '$' {
-			sb.WriteByte(md[i])
-			sb.WriteByte(md[i+1])
-			i += 2
-			continue
-		}
-		// Rule 1: opener must be followed by a non-whitespace character.
-		if i+1 >= len(md) || isMathSpace(md[i+1]) {
-			sb.WriteByte(md[i])
-			i++
-			continue
-		}
-		// Scan for the closer on the same line. Skip escaped `\$`
-		// (LaTeX literal dollar) inside the expression.
-		end := -1
-		for j := i + 2; j < len(md); j++ {
-			if md[j] == '\n' {
-				break
-			}
-			if md[j] == '\\' && j+1 < len(md) {
-				j++ // skip the escaped char
-				continue
-			}
-			if md[j] != '$' {
-				continue
-			}
-			// Rule 2: closer can't be preceded by whitespace.
-			if isMathSpace(md[j-1]) {
-				continue
-			}
-			// Rule 3: closer can't be followed by an ASCII digit.
-			if j+1 < len(md) && md[j+1] >= '0' && md[j+1] <= '9' {
-				continue
-			}
-			end = j
+	n := len(md)
+	for i < n {
+		// Fast skip to the next `$` — covers long prose stretches with
+		// a single memchr-style call instead of a per-byte loop.
+		j := strings.IndexByte(md[i:], '$')
+		if j < 0 {
+			sb.WriteString(md[i:])
 			break
 		}
+		j += i
+		// Flush the prose chunk preceding the dollar.
+		if j > i {
+			sb.WriteString(md[i:j])
+		}
+		i = j
+
+		// Escaped `\$` → literal dollar; emit and advance.
+		if isEscaped(md, i) {
+			sb.WriteByte('$')
+			i++
+			continue
+		}
+
+		// Display math: $$...$$
+		if i+1 < n && md[i+1] == '$' {
+			end := strings.Index(md[i+2:], "$$")
+			if end < 0 {
+				// No closer: emit the `$$` literally and continue.
+				sb.WriteString(md[i : i+2])
+				i += 2
+				continue
+			}
+			end += i + 2
+			expr := strings.TrimSpace(md[i+2 : end])
+			if expr == "" {
+				sb.WriteString(md[i : end+2])
+				i = end + 2
+				continue
+			}
+			rendered, ok := tryRender(expr)
+			if !ok {
+				sb.WriteString(md[i : end+2])
+				i = end + 2
+				continue
+			}
+			sb.WriteString("\n```\n")
+			sb.WriteString(rendered)
+			sb.WriteString("\n```\n")
+			i = end + 2
+			continue
+		}
+
+		// Inline math: $...$ on a single line, with the Pandoc rules.
+		// Rule 1: opener must be followed by non-whitespace.
+		if i+1 >= n || isMathSpace(md[i+1]) {
+			sb.WriteByte('$')
+			i++
+			continue
+		}
+		end := findInlineClose(md, i)
 		if end < 0 {
-			sb.WriteByte(md[i])
+			sb.WriteByte('$')
 			i++
 			continue
 		}
 		expr := strings.TrimSpace(md[i+1 : end])
 		if expr == "" {
-			sb.WriteByte(md[i])
+			sb.WriteByte('$')
 			i++
 			continue
 		}
-		rendered, err := Render(expr, style)
-		if err != nil {
-			sb.WriteByte(md[i])
+		rendered, ok := tryRender(expr)
+		if !ok {
+			sb.WriteByte('$')
 			i++
 			continue
 		}
-		if strings.Contains(rendered, "\n") {
+		if strings.IndexByte(rendered, '\n') >= 0 {
 			sb.WriteString("\n\n```\n")
 			sb.WriteString(rendered)
 			sb.WriteString("\n```\n\n")
@@ -164,4 +136,33 @@ func processInlineMath(md string, style Style) string {
 		i = end + 1
 	}
 	return sb.String()
+}
+
+// findInlineClose scans for the closing `$` of an inline math run that
+// starts at md[i]. Returns the index of the closer, or -1 if none on
+// the same line. Mirrors the Pandoc rules: skip escaped `\$`, closer
+// can't be preceded by whitespace, closer can't be followed by an
+// ASCII digit.
+func findInlineClose(md string, i int) int {
+	for j := i + 2; j < len(md); j++ {
+		c := md[j]
+		if c == '\n' {
+			return -1
+		}
+		if c == '\\' && j+1 < len(md) {
+			j++ // skip the escaped char
+			continue
+		}
+		if c != '$' {
+			continue
+		}
+		if isMathSpace(md[j-1]) {
+			continue
+		}
+		if j+1 < len(md) && md[j+1] >= '0' && md[j+1] <= '9' {
+			continue
+		}
+		return j
+	}
+	return -1
 }

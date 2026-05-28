@@ -13,21 +13,23 @@ type box struct {
 }
 
 // measure computes the [box] for an AST node, memoizing the result on
-// the context's cache so repeated walks (initial measure + render) do
-// not recompute. Cache keys are (node pointer, compact flag).
+// the node itself so repeated walks (initial measure + render) do not
+// recompute. Two slots, one per compact flag.
 func measure(n *node, s renderCtx) box {
 	if n == nil {
 		return box{Width: 0, Height: 1, Baseline: 0}
 	}
-	if s.cache != nil {
-		if b, ok := s.cache.get(n, s.compact); ok {
-			return b
-		}
+	slot := uint8(0)
+	if s.compact {
+		slot = 1
+	}
+	mask := uint8(1) << slot
+	if n.measured&mask != 0 {
+		return n.boxes[slot]
 	}
 	b := measureUncached(n, s)
-	if s.cache != nil {
-		s.cache.put(n, s.compact, b)
-	}
+	n.boxes[slot] = b
+	n.measured |= mask
 	return b
 }
 
