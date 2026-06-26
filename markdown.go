@@ -290,4 +290,3 @@ func findNextOpener(md string, i int) (int, byte) {
 	}
 	return minPos, foundChar
 }
-
