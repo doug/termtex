@@ -50,20 +50,114 @@ func Expand(md string, style Style) string {
 	sb.Grow(len(md))
 	i := 0
 	n := len(md)
+	inCode := false
+	codeOpenerLength := 0
+	codeOpenerChar := byte(0)
+	htmlCloser := ""
+
 	for i < n {
-		// Fast skip to the next `$` — covers long prose stretches with
-		// a single memchr-style call instead of a per-byte loop.
-		j := strings.IndexByte(md[i:], '$')
-		if j < 0 {
+		if inCode {
+			j := strings.IndexByte(md[i:], codeOpenerChar)
+			if j < 0 {
+				sb.WriteString(md[i:])
+				break
+			}
+			j += i
+			if j > i {
+				sb.WriteString(md[i:j])
+			}
+			runStart := j
+			runLen := 0
+			for j < n && md[j] == codeOpenerChar {
+				runLen++
+				j++
+			}
+			sb.WriteString(md[runStart:j])
+			if runLen == codeOpenerLength {
+				inCode = false
+			}
+			i = j
+			continue
+		}
+
+		if htmlCloser != "" {
+			closerLen := len(htmlCloser)
+			j := -1
+			searchStart := i
+			for {
+				pos := strings.Index(md[searchStart:], "</")
+				if pos < 0 {
+					break
+				}
+				matchIdx := searchStart + pos
+				if matchIdx+closerLen <= n && strings.EqualFold(md[matchIdx:matchIdx+closerLen], htmlCloser) {
+					j = matchIdx
+					break
+				}
+				searchStart = matchIdx + 2
+			}
+			if j < 0 {
+				sb.WriteString(md[i:])
+				break
+			}
+			sb.WriteString(md[i : j+closerLen])
+			i = j + closerLen
+			htmlCloser = ""
+			continue
+		}
+
+		idx, char := findNextOpener(md, i)
+		if idx < 0 {
 			sb.WriteString(md[i:])
 			break
 		}
-		j += i
-		// Flush the prose chunk preceding the dollar.
+		j := i + idx
 		if j > i {
 			sb.WriteString(md[i:j])
 		}
 		i = j
+
+		if char == '`' || char == '~' {
+			runStart := i
+			runLen := 0
+			for i < n && md[i] == char {
+				runLen++
+				i++
+			}
+			if isEscaped(md, runStart) {
+				sb.WriteString(md[runStart:i])
+				continue
+			}
+			inCode = true
+			codeOpenerLength = runLen
+			codeOpenerChar = char
+			sb.WriteString(md[runStart:i])
+			continue
+		}
+
+		if char == '<' {
+			lower := strings.ToLower(md[i:])
+			var closer string
+			if strings.HasPrefix(lower, "<code") && (len(lower) == 5 || lower[5] == '>' || lower[5] == ' ' || lower[5] == '\t' || lower[5] == '\n' || lower[5] == '\r') {
+				closer = "</code>"
+			} else if strings.HasPrefix(lower, "<pre") && (len(lower) == 4 || lower[4] == '>' || lower[4] == ' ' || lower[4] == '\t' || lower[4] == '\n' || lower[4] == '\r') {
+				closer = "</pre>"
+			}
+
+			if closer != "" {
+				tagEnd := strings.IndexByte(md[i:], '>')
+				if tagEnd >= 0 {
+					sb.WriteString(md[i : i+tagEnd+1])
+					i = i + tagEnd + 1
+					htmlCloser = closer
+					continue
+				}
+			}
+
+			sb.WriteByte('<')
+			i++
+			continue
+		}
 
 		// Escaped `\$` → literal dollar; emit and advance.
 		if isEscaped(md, i) {
@@ -166,3 +260,34 @@ func findInlineClose(md string, i int) int {
 	}
 	return -1
 }
+
+// findNextOpener finds the index of the first occurrence of '$', '`', '<', or '~' in md[i:].
+// Returns the index (relative to i) and the character found. If none are found, returns -1, 0.
+func findNextOpener(md string, i int) (int, byte) {
+	n := len(md) - i
+	minPos := n
+	var foundChar byte
+
+	if nextDollar := strings.IndexByte(md[i:i+minPos], '$'); nextDollar >= 0 {
+		minPos = nextDollar
+		foundChar = '$'
+	}
+	if nextBacktick := strings.IndexByte(md[i:i+minPos], '`'); nextBacktick >= 0 {
+		minPos = nextBacktick
+		foundChar = '`'
+	}
+	if nextHTML := strings.IndexByte(md[i:i+minPos], '<'); nextHTML >= 0 {
+		minPos = nextHTML
+		foundChar = '<'
+	}
+	if nextTilde := strings.IndexByte(md[i:i+minPos], '~'); nextTilde >= 0 {
+		minPos = nextTilde
+		foundChar = '~'
+	}
+
+	if minPos == n {
+		return -1, 0
+	}
+	return minPos, foundChar
+}
+
