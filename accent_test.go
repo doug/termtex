@@ -54,15 +54,15 @@ func TestAccentHat(t *testing.T) {
 
 func TestWideHat(t *testing.T) {
 	got, _ := Render(`\widehat{abc}`, Style{})
-	if !strings.Contains(got, "^^^") {
-		t.Errorf(`\widehat{abc} should produce three carets, got %q`, got)
+	if got != " ^\nabc" {
+		t.Errorf(`\widehat{abc} should center one caret over the base, got %q`, got)
 	}
 }
 
 func TestWideTilde(t *testing.T) {
 	got, _ := Render(`\widetilde{xyz}`, Style{})
-	if !strings.Contains(got, "~~~") {
-		t.Errorf(`\widetilde{xyz} should produce three tildes, got %q`, got)
+	if got != " ~\nxyz" {
+		t.Errorf(`\widetilde{xyz} should center one tilde over the base, got %q`, got)
 	}
 }
 

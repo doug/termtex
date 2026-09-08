@@ -1,0 +1,2 @@
+go test fuzz v1
+string("\\hat\\hat 0_\\hat\\hat0")

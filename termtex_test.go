@@ -23,8 +23,8 @@ func TestRenderSimple(t *testing.T) {
 		{name: "subscript", input: "x_1", want: "x₁"},
 		{name: "fraction", input: `\frac{a}{b}`, want: " a\n───\n b"},
 		{name: "greek", input: `\alpha + \beta`, want: "α + β"},
-		{name: "sqrt simple", input: `\sqrt{x}`, want: "√(x)"},
-		{name: "sin function", input: `\sin(x)`, want: "sin (x)"},
+		{name: "sqrt simple", input: `\sqrt{x}`, want: "√x"},
+		{name: "sin function", input: `\sin(x)`, want: "sin(x)"},
 		{name: "euler identity", input: `e^{i\pi} + 1 = 0`, want: " iπ\ne   + 1 = 0"},
 	}
 
@@ -172,8 +172,8 @@ func TestSqrtModes(t *testing.T) {
 		{
 			name:  "single char parens",
 			input: `\sqrt{x}`,
-			check: func(s string) bool { return s == "√(x)" },
-			desc:  "should be √(x)",
+			check: func(s string) bool { return s == "√x" },
+			desc:  "should be √x",
 		},
 		{
 			name:  "multi char parens",
@@ -300,9 +300,14 @@ func TestSpacingNormalEquation(t *testing.T) {
 }
 
 func TestTextOperatorSpacing(t *testing.T) {
-	got, _ := Render(`\sin(x)`, Style{})
-	if !strings.Contains(got, "sin ") {
-		t.Errorf("expected space after sin, got: %q", got)
+	// Op–Ord gets a space, Op–Open does not (TeX spacing table).
+	got, _ := Render(`\sin x`, Style{})
+	if got != "sin x" {
+		t.Errorf("expected `sin x`, got: %q", got)
+	}
+	got, _ = Render(`\det(A)`, Style{})
+	if got != "det(A)" {
+		t.Errorf("expected `det(A)`, got: %q", got)
 	}
 }
 

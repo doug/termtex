@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/doug/termtex"
@@ -38,6 +39,8 @@ func main() {
 	colorFlag := flag.Bool("color", false, "enable ANSI color output (default: auto-detect when stdout is a TTY; honors NO_COLOR)")
 	italicFlag := flag.Bool("italic", false, "use Mathematical Italic Unicode (requires font support)")
 	asciiFlag := flag.Bool("ascii", false, "restrict output to 7-bit ASCII")
+	inlineFlag := flag.Bool("inline", false, "typeset in text style (flat fractions, side limits) as for math inside a sentence")
+	widthFlag := flag.Int("width", 0, "maximum columns; wider expressions break before relations (default: $COLUMNS when stdout is a TTY, else unlimited)")
 	mdFlag := flag.Bool("md", false, "treat input as markdown; expand $...$ and $$...$$ math blocks in place")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: termtex [flags] [expression]")
@@ -91,10 +94,21 @@ func main() {
 		useColor = isTerminal(os.Stdout) && os.Getenv("NO_COLOR") == ""
 	}
 
+	// Width default: $COLUMNS when writing to a terminal. The shell
+	// only exports it if asked to, so this is a best-effort fallback.
+	width := *widthFlag
+	if !flagSet("width") && isTerminal(os.Stdout) {
+		if cols, err := strconv.Atoi(os.Getenv("COLUMNS")); err == nil && cols > 0 {
+			width = cols
+		}
+	}
+
 	style := termtex.Style{
 		Color:  useColor,
 		Italic: *italicFlag,
 		ASCII:  *asciiFlag,
+		Inline: *inlineFlag,
+		Width:  width,
 	}
 
 	if *mdFlag {

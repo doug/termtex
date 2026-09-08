@@ -1,0 +1,943 @@
+# termtex gallery
+
+This document exercises the markdown path: every equation from demo.sh as display math, plus inline uses.
+
+Inline: the quadratic x = (-b ± √(b² - 4ac))/(2a), a sum ∑ᵢ₌₁ⁿ i², an integral ∫₀¹ f(x) dx, a limit lim_{n→∞} aₙ, and a norm ‖x‖₂ ≤ ‖x‖₁ all stay in the sentence. Prices like $5 and $10,000 are not math.
+
+**1. Euler's Identity**
+
+
+```
+ iπ
+e   + 1 = 0
+```
+
+
+**2. Pythagorean Theorem**
+
+
+```
+a² + b² = c²
+```
+
+
+**3. Quadratic Formula**
+
+
+```
+-b ± √(b² - 4ac)
+────────────────
+       2a
+```
+
+
+**4. Binomial Theorem**
+
+
+```
+            n      n!
+(x + y)ⁿ =  ∑  ────────── xᵏyⁿ⁻ᵏ
+           k=0 k!(n - k)!
+```
+
+
+**5. Power Rule**
+
+
+```
+ d
+──── xⁿ = nxⁿ⁻¹
+ dx
+```
+
+
+**6. Definition of Derivative**
+
+
+```
+ df        f(x + h) - f(x)
+──── = lim ───────────────
+ dx    h→0        h
+```
+
+
+**7. Fundamental Theorem of Calculus**
+
+
+```
+∫ₐᵇ f(x)dx = F(b) - F(a)
+```
+
+
+**8. Chain Rule**
+
+
+```
+ dy     dy     du
+──── = ──── · ────
+ dx     du     dx
+```
+
+
+**9. Product Rule**
+
+
+```
+(fg)′ = f′g + fg′
+```
+
+
+**10. Integration by Parts**
+
+
+```
+∫ u dv = uv - ∫ v du
+```
+
+
+**11. Sum of Natural Numbers**
+
+
+```
+ n      n(n + 1)
+ ∑  i = ────────
+i=1        2
+```
+
+
+**12. Sum of Squares**
+
+
+```
+ n       n(n + 1)(2n + 1)
+ ∑  i² = ────────────────
+i=1             6
+```
+
+
+**13. Geometric Series**
+
+
+```
+ n       1 - rⁿ⁺¹
+ ∑  rᵏ = ────────
+k=0       1 - r
+```
+
+
+**14. Infinite Geometric Series**
+
+
+```
+ ∞         1
+ ∑  rᵏ = ─────
+k=0      1 - r
+```
+
+
+**15. Difference of Squares**
+
+
+```
+a² - b² = (a + b)(a - b)
+```
+
+
+**16. Cubic Formula (Depressed)**
+
+
+```
+      ⎛   q     ⎛ q²     p³ ⎞⎞     ⎛   q     ⎛ q²     p³ ⎞⎞
+x = ³√⎜- ─── + √⎜──── + ────⎟⎟ + ³√⎜- ─── - √⎜──── + ────⎟⎟
+      ⎝   2     ⎝ 4      27 ⎠⎠     ⎝   2     ⎝ 4      27 ⎠⎠
+```
+
+
+**17. Fraction Addition**
+
+
+```
+ a     c    ad + bc
+─── + ─── = ───────
+ b     d      bd
+```
+
+
+**18. Logarithm Change of Base**
+
+
+```
+         ln b
+logₐ b = ────
+         ln a
+```
+
+
+**19. Exponential-Log Inverse**
+
+
+```
+ ln x
+e     = x
+```
+
+
+**20. Euler's Totient Product**
+
+
+```
+             ⎛     1 ⎞
+φ(n) = n  ∏  ⎜1 - ───⎟
+         p|n ⎝     p ⎠
+```
+
+
+**21. Gaussian Integral**
+
+
+```
+ ∞  -x²      √π
+∫  e   dx = ────
+ 0           2
+```
+
+
+**22. Taylor Series**
+
+
+```
+            (n)
+        ∞  f   (a)
+f(x) =  ∑  ─────── (x - a)ⁿ
+       n=0   n!
+```
+
+
+**23. Maclaurin Series for e^x**
+
+
+```
+      ∞   xⁿ
+eˣ =  ∑  ────
+     n=0  n!
+```
+
+
+**24. Basel Problem**
+
+
+```
+ ∞   1      π²
+ ∑  ──── = ────
+n=1  n²     6
+```
+
+
+**25. Leibniz Formula for Pi**
+
+
+```
+ π         1     1     1
+─── = 1 - ─── + ─── - ─── + ⋯
+ 4         3     5     7
+```
+
+
+**26. Cauchy-Schwarz Inequality**
+
+
+```
+(∑ aᵢbᵢ)² ≤ (∑ aᵢ²)(∑ bᵢ²)
+```
+
+
+**27. Mean Value Theorem**
+
+
+```
+f(b) - f(a) = f′(c)(b - a)
+```
+
+
+**28. L'Hopital's Rule**
+
+
+```
+    f(x)       f′(x)
+lim ──── = lim ─────
+x→c g(x)   x→c g′(x)
+```
+
+
+**29. Euler-Mascheroni Constant**
+
+
+```
+        ⎛ n   1        ⎞
+γ = lim ⎜ ∑  ─── - ln n⎟
+    n→∞ ⎝k=1  k        ⎠
+```
+
+
+**30. Stirling's Approximation**
+
+
+```
+                n
+           ⎛ n ⎞
+n! ≈ √(2πn)⎜───⎟
+           ⎝ e ⎠
+```
+
+
+**31. Pythagorean Identity**
+
+
+```
+sin² θ + cos² θ = 1
+```
+
+
+**32. Sine Addition**
+
+
+```
+sin(α + β) = sin α cos β + cos α sin β
+```
+
+
+**33. Cosine Addition**
+
+
+```
+cos(α + β) = cos α cos β - sin α sin β
+```
+
+
+**34. Euler's Formula**
+
+
+```
+eⁱᶿ = cos θ + i sin θ
+```
+
+
+**35. Double Angle Sine**
+
+
+```
+sin 2θ = 2 sin θ cos θ
+```
+
+
+**36. Double Angle Cosine**
+
+
+```
+cos 2θ = cos² θ - sin² θ
+```
+
+
+**37. Tangent Definition**
+
+
+```
+        sin θ
+tan θ = ─────
+        cos θ
+```
+
+
+**38. Law of Sines**
+
+
+```
+  a       b       c
+───── = ───── = ─────
+sin A   sin B   sin C
+```
+
+
+**39. Law of Cosines**
+
+
+```
+c² = a² + b² - 2ab cos C
+```
+
+
+**40. Half-Angle Formula**
+
+
+```
+     θ      ⎛1 - cos θ⎞
+sin ─── = ±√⎜─────────⎟
+     2      ⎝    2    ⎠
+```
+
+
+**41. 2x2 Determinant**
+
+
+```
+    ⎡ a  b ⎤
+det ⎣ c  d ⎦ = ad - bc
+```
+
+
+**42. Kronecker Delta**
+
+
+```
+      ⎧ 1  if i = j
+δᵢⱼ = ⎩ 0  if i ≠ j
+```
+
+
+**43. Matrix Inverse (2x2)**
+
+
+```
+         1    ⎡ d   -b ⎤
+A⁻¹ = ─────── ⎣ -c  a  ⎦
+      ad - bc
+```
+
+
+**44. Eigenvalue Equation**
+
+
+```
+Av = λv
+```
+
+
+**45. Characteristic Polynomial**
+
+
+```
+det(A - λI) = 0
+```
+
+
+**46. Dot Product**
+
+
+```
+         n
+a · b =  ∑  aᵢbᵢ
+        i=1
+```
+
+
+**47. Cross Product**
+
+
+```
+        │ i   j   k  │
+a × b = │ a₁  a₂  a₃ │
+        │ b₁  b₂  b₃ │
+```
+
+
+**48. Matrix Transpose**
+
+
+```
+(AB)ᵀ = BᵀAᵀ
+```
+
+
+**49. Trace**
+
+
+```
+         n
+tr(A) =  ∑  aᵢᵢ
+        i=1
+```
+
+
+**50. Rotation Matrix**
+
+
+```
+       ⎡ cos θ  -sin θ ⎤
+R(θ) = ⎣ sin θ  cos θ  ⎦
+```
+
+
+**51. Newton's Second Law**
+
+
+```
+F = ma
+```
+
+
+**52. E = mc^2**
+
+
+```
+E = mc²
+```
+
+
+**53. Kinetic Energy**
+
+
+```
+      1
+Eₖ = ─── mv²
+      2
+```
+
+
+**54. Gravitational Force**
+
+
+```
+      m₁m₂
+F = G ────
+       r²
+```
+
+
+**55. Gravitational Potential Energy**
+
+
+```
+      Gm₁m₂
+U = - ─────
+        r
+```
+
+
+**56. Escape Velocity**
+
+
+```
+      ⎛2GM⎞
+vₑ = √⎜───⎟
+      ⎝ r ⎠
+```
+
+
+**57. Simple Harmonic Motion**
+
+
+```
+x(t) = A cos(ωt + φ)
+```
+
+
+**58. Euler-Lagrange Equation**
+
+
+```
+ d    ∂L     ∂L
+──── ──── - ──── = 0
+ dt   ∂v     ∂q
+```
+
+
+**59. Hamilton's Equation**
+
+
+```
+ dq     ∂H
+──── = ────
+ dt     ∂p
+```
+
+
+**60. Centripetal Acceleration**
+
+
+```
+     v²
+a = ────
+     r
+```
+
+
+**61. Gauss's Law**
+
+
+```
+         ρ
+∇ · E = ────
+         ε₀
+```
+
+
+**62. Gauss's Law (Magnetism)**
+
+
+```
+∇ · B = 0
+```
+
+
+**63. Faraday's Law**
+
+
+```
+           ∂B
+∇ × E = - ────
+           ∂t
+```
+
+
+**64. Ampere's Law**
+
+
+```
+                    ∂E
+∇ × B = μ₀J + μ₀ε₀ ────
+                    ∂t
+```
+
+
+**65. Coulomb's Law**
+
+
+```
+     1     q₁q₂
+F = ──── · ────
+    4πε₀    r²
+```
+
+
+**66. Lorentz Force**
+
+
+```
+F = q(E + v × B)
+```
+
+
+**67. Ohm's Law**
+
+
+```
+V = IR
+```
+
+
+**68. Capacitor Energy**
+
+
+```
+     1
+E = ─── CV²
+     2
+```
+
+
+**69. Biot-Savart Law**
+
+
+```
+      μ₀  I dl × r̂
+dB = ──── ────────
+      4π     r²
+```
+
+
+**70. Poynting Vector**
+
+
+```
+     1
+S = ──── E × B
+     μ₀
+```
+
+
+**71. Schrodinger Equation**
+
+
+```
+    ∂
+iℏ ──── Ψ = ĤΨ
+    ∂t
+```
+
+
+**72. Heisenberg Uncertainty**
+
+
+```
+         ℏ
+Δx Δp ≥ ───
+         2
+```
+
+
+**73. de Broglie Wavelength**
+
+
+```
+     h
+λ = ───
+     p
+```
+
+
+**74. Planck-Einstein Relation**
+
+
+```
+E = hν
+```
+
+
+**75. Time Dilation**
+
+
+```
+          Δt
+Δt′ = ───────────
+       ⎛     v² ⎞
+      √⎜1 - ────⎟
+       ⎝     c² ⎠
+```
+
+
+**76. Length Contraction**
+
+
+```
+       ⎛     v² ⎞
+L = L₀√⎜1 - ────⎟
+       ⎝     c² ⎠
+```
+
+
+**77. Relativistic Energy-Momentum**
+
+
+```
+E² = (pc)² + (mc²)²
+```
+
+
+**78. Schwarzschild Radius**
+
+
+```
+     2GM
+rₛ = ───
+     c²
+```
+
+
+**79. Photoelectric Effect**
+
+
+```
+Eₖ = hν - φ
+```
+
+
+**80. Rydberg Formula**
+
+
+```
+ 1     ⎛ 1     1 ⎞
+─── = R⎜─── - ───⎟
+ λ     ⎝n₁²   n₂²⎠
+```
+
+
+**81. Ideal Gas Law**
+
+
+```
+PV = nRT
+```
+
+
+**82. Boltzmann Entropy**
+
+
+```
+S = k  ln Ω
+     B
+```
+
+
+**83. First Law of Thermodynamics**
+
+
+```
+ΔU = Q - W
+```
+
+
+**84. Carnot Efficiency**
+
+
+```
+         T
+          c
+η = 1 - ────
+         Tₕ
+```
+
+
+**85. Stefan-Boltzmann Law**
+
+
+```
+P = σAT⁴
+```
+
+
+**86. Maxwell-Boltzmann Distribution**
+
+
+```
+                3/2
+          ⎛ m  ⎞      -mv²/2kT
+f(v) = 4πn⎜────⎟   v²e
+          ⎝2πkT⎠
+```
+
+
+**87. Planck's Law**
+
+
+```
+       2hν³       1
+B(ν) = ──── · ──────────
+        c²     hν/kT
+              e      - 1
+```
+
+
+**88. Gibbs Free Energy**
+
+
+```
+G = H - TS
+```
+
+
+**89. Clausius Inequality**
+
+
+```
+   dQ
+∮ ──── ≤ 0
+   T
+```
+
+
+**90. Equipartition Theorem**
+
+
+```
+       f
+⟨E⟩ = ─── k T
+       2   B
+```
+
+
+**91. Bayes' Theorem**
+
+
+```
+           P(B | A) P(A)
+P(A | B) = ─────────────
+               P(B)
+```
+
+
+**92. Normal Distribution**
+
+
+```
+         1     -(x-μ)²/(2σ²)
+f(x) = ────── e
+       σ√(2π)
+```
+
+
+**93. Expected Value**
+
+
+```
+E[X] = ∑ xᵢ P(xᵢ)
+       i
+```
+
+
+**94. Variance**
+
+
+```
+Var(X) = E[X²] - (E[X])²
+```
+
+
+**95. Shannon Entropy**
+
+
+```
+H = -∑ pᵢ log₂ pᵢ
+     i
+```
+
+
+**96. Bernoulli Trial**
+
+
+```
+           n!
+P(k) = ────────── pᵏ(1 - p)ⁿ⁻ᵏ
+       k!(n - k)!
+```
+
+
+**97. Golden Ratio**
+
+
+```
+    1 + √5
+φ = ──────
+      2
+```
+
+
+**98. Euler Product (Riemann Zeta)**
+
+
+```
+        ∞   1          1
+ζ(s) =  ∑  ──── = ∏ ───────
+       n=1  nˢ    p 1 - p⁻ˢ
+```
+
+
+**99. Wallis Product**
+
+
+```
+ π     ∞    4n²
+─── =  ∏  ───────
+ 2    n=1 4n² - 1
+```
+
+
+**100. Euler's Reflection Formula**
+
+
+```
+                  π
+Γ(z)Γ(1 - z) = ───────
+               sin(πz)
+```
+
+

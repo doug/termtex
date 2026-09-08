@@ -40,8 +40,17 @@ termtex -color -italic '\int_{0}^{\infty} e^{-x^2} dx'
 # pure 7-bit ASCII output (for code comments, CI logs, terminals without good Unicode)
 termtex -ascii '\frac{-b \pm \sqrt{b^2 - 4ac}}{2a}'
 
+# inline (text-style) typesetting: flat fractions, side limits, one row where possible
+termtex -inline '\frac{-b \pm \sqrt{b^2 - 4ac}}{2a}'     # (-b ± √(b² - 4ac))/(2a)
+
+# break long display math before relations to fit a width (default: $COLUMNS on a TTY)
+termtex -width 40 'a + b + c = d + e + f = g + h + i'
+
 # markdown mode: rewrite $...$ and $$...$$ in a document and pipe into glow
 cat doc.md | termtex -md | glow -
+
+# expressions that start with a minus need `--` so they aren't read as flags
+termtex -- '-\frac{1}{2}'
 ```
 
 Run `./demo.sh` for a full showcase.
@@ -51,7 +60,7 @@ Run `./demo.sh` for a full showcase.
 ```go
 import "github.com/doug/termtex"
 
-// Simple render (Style{} is the package default)
+// Simple render (Style{} is the package default: display style)
 out, err := termtex.Render(`\frac{1}{2}`, termtex.Style{})
 
 // With style options
@@ -60,15 +69,58 @@ out, err := termtex.Render(`\frac{1}{2}`, termtex.Style{
     Italic: true,
 })
 
+// Inline (text style) for math inside a sentence
+out, err := termtex.Render(`\sum_{i=1}^{n} x_i`, termtex.Style{Inline: true})
+// → ∑ᵢ₌₁ⁿ xᵢ
+
+// Break display math wider than 60 columns before relations
+out, err := termtex.Render(longDerivation, termtex.Style{Width: 60})
+
 // Pure ASCII output
 out, err := termtex.Render(`\sqrt{\pi}`, termtex.Style{ASCII: true})
 ```
+
+## Typesetting
+
+termtex follows TeX's layout rules on a character grid:
+
+- **Math styles.** The default is *display* style: fractions stack over a bar
+  and the limits of `\sum`, `\prod` and `\lim` sit above and below the
+  operator. `Style.Inline` (or `-inline`) selects *text* style: fractions
+  flatten to `a/b` with parentheses only where needed (`(a + b)/2`, `1/(2a)`,
+  `n(n+1)/2`) and limits become side scripts (`∑ᵢ₌₁ⁿ`), so ordinary
+  expressions stay on one row. Sub- and superscripts are set in *script*
+  style, where fractions flatten and optional spaces vanish (`i=1`).
+  `\displaystyle`, `\textstyle` and `\scriptstyle` switch the style for the
+  rest of their group.
+- **Scripts.** A script uses the Unicode super/subscript block when every
+  character has a form there (`x²`, `aₙ`, `xⁿ⁺¹`). Otherwise it stacks in
+  display style, one script at a time (`T_c + T_h` keeps `Tₕ` inline), and is
+  written TeX-style on one row in text style (`T_c`, `x^π`, `lim_{n→∞}`). A
+  script that carries its own script stacks (`e^{x^2}`) rather than flattening
+  ambiguously.
+- **Limits.** Integrals take side limits in both styles (`∫₀¹`), as in TeX.
+  `\limits` and `\nolimits` override; `\dfrac` and `\tfrac` force a stacked or
+  flat fraction.
+- **Line breaking.** With `Style.Width` (or `-width`), display math wider than
+  the limit breaks before relations, then before binary operators, with
+  continuation rows indented four cells. Inline math never breaks.
+- **Spacing.** Every atom has a TeX class (Ord, Op, Bin, Rel, Open, Close,
+  Punct, Inner). Relations and binary operators get a cell on each side,
+  punctuation a cell after, named functions a cell before an operand but none
+  before a parenthesis (`sin x`, `det(A)`), and a leading or post-relation
+  minus is unary (`x = -1`, `(-b)`).
+- **Radicals** stay on one row: `√2`, `√x`, and `√(x² + y²)` when the radicand
+  is compound.
+- **Equation arrays.** `align`, `aligned`, `gather`, `array`, `cases`, and bare
+  `\\` / `&` at the top level of an expression align on `&` and stack rows.
 
 ### Markdown Integration
 
 termtex can expand `$...$` (inline) and `$$...$$` (display) math in markdown,
 making it easy to integrate with terminal markdown renderers like
-[glamour](https://github.com/charmbracelet/glamour). This is the recommended
+[glamour](https://github.com/charmbracelet/glamour). Inline math is set in
+text style and display math in display style. This is the recommended
 path for glamour users — glamour doesn't expose a goldmark-extension hook, so
 preprocessing is the only way to get math into its pipeline.
 
@@ -108,28 +160,32 @@ use KaTeX or MathJax client-side.)
 
 | Category | Commands |
 |---|---|
-| Fractions | `\frac{a}{b}` |
+| Fractions | `\frac{a}{b}`, `\dfrac`, `\tfrac`, `\binom{n}{k}` |
 | Superscripts / Subscripts | `x^2`, `x_{i}`, `x_{i}^{2}` |
 | Square roots | `\sqrt{x}`, `\sqrt[3]{x}` |
-| Big operators | `\sum`, `\prod`, `\int`, `\oint` with limits |
-| Limits | `\lim_{x \to 0}` |
-| Greek letters | `\alpha` through `\omega`, `\Gamma` through `\Omega` |
-| Math fonts | `\mathbb` (ℕℤℚℝℂ), `\mathcal` (ℒℳℛ), `\mathbf` (𝐱), `\mathfrak` (𝔤), `\mathsf` (𝖠), `\mathit` |
-| Delimiters | `\left( \right)`, `\left[ \right]`, `\left\{ \right\}` |
-| Matrices | `pmatrix`, `bmatrix`, `vmatrix`, `Bmatrix`, `Vmatrix` |
-| Accents | `\hat`, `\bar`, `\vec`, `\dot`, `\ddot`, `\tilde`, `\overline`, `\underline` |
-| Wide accents | `\widehat`, `\widetilde` |
-| Annotations | `\overbrace{X}^{label}`, `\underbrace{X}_{label}` |
-| Operators | `\pm`, `\times`, `\div`, `\cdot`, `\leq`, `\geq`, `\neq`, `\approx`, `\equiv` |
-| Arrows | `\to`, `\rightarrow`, `\leftarrow`, `\Rightarrow`, `\Leftarrow` |
-| Sets | `\in`, `\notin`, `\subset`, `\subseteq`, `\cup`, `\cap` |
-| Logic | `\forall`, `\exists` |
-| Calculus | `\partial`, `\nabla`, `\infty`, `\hbar` |
-| Brackets | `\langle`, `\rangle`, `\mid` |
-| Functions | `\sin`, `\cos`, `\log`, `\ln`, `\exp`, `\det`, `\max`, `\min`, ... |
-| Text | `\text{...}` |
-| Spacing | `\,`, `\;`, `\!`, `\quad`, `\qquad` |
-| Dots | `\ldots`, `\cdots`, `\vdots`, `\ddots` |
+| Big operators | `\sum`, `\prod`, `\coprod`, `\int`, `\iint`, `\iiint`, `\oint`, `\bigcup`, `\bigcap`, `\bigoplus`, `\bigotimes`, `\bigvee`, `\bigwedge` with limits; `\limits`, `\nolimits` |
+| Limits | `\lim`, `\limsup`, `\liminf`, `\max`, `\min`, `\sup`, `\inf`, `\argmax`, `\operatorname*{…}` with stacked limits |
+| Greek letters | `\alpha` through `\omega`, `\Gamma` through `\Omega`, `\varepsilon`, `\vartheta`, `\varphi`, `\varpi`, `\varrho`, `\varsigma` |
+| Math fonts | `\mathbb` (ℕℤℚℝℂ), `\mathcal`/`\mathscr` (ℒℳℛ), `\mathbf`/`\boldsymbol`/`\bm` (𝐱), `\mathfrak` (𝔤), `\mathsf` (𝖠), `\mathtt` (𝚊), `\mathit`, `\cancel`, `\sout` |
+| Delimiters | `\left( \right)`, `\left[ \right]`, `\left\{ \right\}`, `\left\langle \right\rangle`, `\lfloor \rfloor`, `\lceil \rceil`, `\|`, `\lVert \rVert`, `\left. \right|` |
+| Matrices | `pmatrix`, `bmatrix`, `vmatrix`, `Bmatrix`, `Vmatrix`, `array{lcr}` |
+| Equation arrays | `align`, `aligned`, `gather`, `split`, `cases`, and bare `\\` / `&`; `\notag`, `\label{}` ignored |
+| Accents | `\hat`, `\bar`, `\vec`, `\dot`, `\ddot`, `\dddot`, `\tilde`, `\breve`, `\check`, `\acute`, `\grave`, `\mathring`, `\overline`, `\underline` |
+| Wide accents | `\widehat`, `\widetilde`, `\overrightarrow`, `\overleftarrow` |
+| Annotations | `\overbrace{X}^{label}`, `\underbrace{X}_{label}`, `\overset{a}{b}`, `\underset{a}{b}`, `\stackrel`, `\xrightarrow[below]{above}`, `\xleftarrow`, `\substack{a \\ b}`, `\phantom` |
+| Operators | `\pm`, `\mp`, `\times`, `\div`, `\cdot`, `\ast`, `\star`, `\circ`, `\bullet`, `\oplus`, `\ominus`, `\otimes`, `\oslash`, `\odot`, `\boxplus`, `\sqcup`, `\sqcap`, `\uplus`, `\wr`, `\dagger`, `\ddagger`, `\setminus`, `\bmod`, `\pmod{n}` |
+| Relations | `\leq`, `\geq`, `\neq`, `\approx`, `\equiv`, `\sim`, `\simeq`, `\cong`, `\propto`, `\doteq`, `\asymp`, `\ll`, `\gg`, `\prec`, `\succ`, `\preceq`, `\succeq`, `\models`, `\vdash`, `\dashv`, `\perp`, `\parallel`, `\mid`, `\nmid`, `\lt`, `\gt`, `\therefore`, `\because`, `\coloneqq`, `\not` (any relation) |
+| Arrows | `\to`, `\gets`, `\rightarrow`, `\leftarrow`, `\leftrightarrow`, `\Rightarrow`, `\Leftarrow`, `\Leftrightarrow`, `\iff`, `\implies`, `\impliedby`, `\longrightarrow`, `\mapsto`, `\longmapsto`, `\hookrightarrow`, `\twoheadrightarrow`, `\rightharpoonup`, `\rightleftharpoons`, `\uparrow`, `\downarrow`, `\Uparrow`, `\nearrow`, `\searrow`, `\leadsto`, `\nrightarrow`, `\circlearrowleft`, … |
+| Sets | `\in`, `\notin`, `\ni`, `\subset`, `\subseteq`, `\subsetneq`, `\supset`, `\supseteq`, `\nsubseteq`, `\sqsubseteq`, `\cup`, `\cap`, `\emptyset`, `\varnothing` |
+| Logic | `\forall`, `\exists`, `\nexists`, `\neg`, `\lnot`, `\land`, `\wedge`, `\lor`, `\vee`, `\top`, `\bot`, `\veebar`, `\barwedge` |
+| Calculus | `\partial`, `\nabla`, `\infty`, `\hbar`, `\hslash` |
+| Letterlike | `\aleph`, `\beth`, `\gimel`, `\Re`, `\Im`, `\wp`, `\ell`, `\imath`, `\jmath`, `\mho`, `\complement` |
+| Geometry & misc | `\angle`, `\measuredangle`, `\triangle`, `\square`, `\Diamond`, `\clubsuit`, `\diamondsuit`, `\heartsuit`, `\spadesuit`, `\flat`, `\natural`, `\sharp`, `\degree`, `\S`, `\P`, `\copyright`, `\checkmark` |
+| Brackets | `\langle`, `\rangle`, `\lfloor`, `\rfloor`, `\lceil`, `\rceil`, `\lbrace`, `\rbrace`, `\lvert`, `\rvert`, `\lVert`, `\rVert`, `\colon`; `\big`, `\Big`, `\bigg`, `\Bigg` (and `l`/`r` forms) accepted |
+| Functions | `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcsin`, `\sinh`, `\coth`, `\log`, `\ln`, `\lg`, `\exp`, `\det`, `\dim`, `\ker`, `\deg`, `\hom`, `\gcd`, `\lcm`, `\arg`, `\sgn`, `\tr`, `\rank`, `\Pr`, `\operatorname{…}` |
+| Text | `\text{...}`, `\mathrm`, `\textrm`, `\textbf`, `\textit`, `\textsf`, `\texttt`, `\mbox` |
+| Spacing | `\,`, `\:`, `\;`, `\!`, `\ `, `~`, `\quad`, `\qquad`, `\thinspace`, `\enspace`, `\negthinspace` |
+| Dots | `\ldots`, `\cdots`, `\vdots`, `\ddots`, `\iddots`, `\dotsc`, `\dotsb` |
 
 ## Equation Gallery
 
@@ -160,36 +216,34 @@ a² + b² = c²
 **4. Binomial Theorem** `(x + y)^n = \sum_{k=0}^{n} \frac{n!}{k!(n-k)!} x^k y^{n-k}`
 ```
             n      n!
-(x + y)ⁿ =  ∑  ──────────xᵏyⁿ⁻ᵏ
+(x + y)ⁿ =  ∑  ────────── xᵏyⁿ⁻ᵏ
            k=0 k!(n - k)!
 ```
 
 **5. Power Rule** `\frac{d}{dx} x^n = nx^{n-1}`
 ```
  d
-────xⁿ = nxⁿ⁻¹
+──── xⁿ = nxⁿ⁻¹
  dx
 ```
 
 **6. Definition of Derivative** `\frac{df}{dx} = \lim_{h \to 0} \frac{f(x+h) - f(x)}{h}`
 ```
- df          f(x + h) - f(x)
-──── = lim   ───────────────
- dx    h→0          h
+ df        f(x + h) - f(x)
+──── = lim ───────────────
+ dx    h→0        h
 ```
 
 **7. Fundamental Theorem of Calculus** `\int_{a}^{b} f(x) dx = F(b) - F(a)`
 ```
-b
-∫ f(x)dx = F(b) - F(a)
-a
+∫ₐᵇ f(x)dx = F(b) - F(a)
 ```
 
 **8. Chain Rule** `\frac{dy}{dx} = \frac{dy}{du} \cdot \frac{du}{dx}`
 ```
- dy     dy   du
-──── = ────·────
- dx     du   dx
+ dy     dy     du
+──── = ──── · ────
+ dx     du     dx
 ```
 
 **9. Product Rule** `(fg)^{\prime} = f^{\prime}g + fg^{\prime}`
@@ -199,7 +253,7 @@ a
 
 **10. Integration by Parts** `\int u \, dv = uv - \int v \, du`
 ```
-∫u dv = uv - ∫v du
+∫ u dv = uv - ∫ v du
 ```
 
 ### Algebra and Number Theory
@@ -266,25 +320,25 @@ e     = x
 
 **20. Euler's Totient Product** `\phi(n) = n \prod_{p | n} \left(1 - \frac{1}{p}\right)`
 ```
-            ⎛     1 ⎞
-φ(n) = n ∏  ⎜1 - ───⎟
-        p|n ⎝     p ⎠
+             ⎛     1 ⎞
+φ(n) = n  ∏  ⎜1 - ───⎟
+         p|n ⎝     p ⎠
 ```
 
 ### Calculus and Analysis
 
 **21. Gaussian Integral** `\int_{0}^{\infty} e^{-x^2} dx = \frac{\sqrt{\pi}}{2}`
 ```
-∞          √(π)
-∫ e⁻ˣ²dx = ────
-0           2
+ ∞  -x²      √π
+∫  e   dx = ────
+ 0           2
 ```
 
 **22. Taylor Series** `f(x) = \sum_{n=0}^{\infty} \frac{f^{(n)}(a)}{n!} (x - a)^n`
 ```
             (n)
         ∞  f   (a)
-f(x) =  ∑  ───────(x - a)ⁿ
+f(x) =  ∑  ─────── (x - a)ⁿ
        n=0   n!
 ```
 
@@ -311,7 +365,7 @@ n=1  n²     6
 
 **26. Cauchy-Schwarz Inequality** `\left(\sum a_i b_i\right)^2 \leq \left(\sum a_i^2\right)\left(\sum b_i^2\right)`
 ```
-(∑aᵢbᵢ)² ≤ (∑a²ᵢ)(∑b²ᵢ)
+(∑ aᵢbᵢ)² ≤ (∑ aᵢ²)(∑ bᵢ²)
 ```
 
 **27. Mean Value Theorem** `f(b) - f(a) = f^{\prime}(c)(b - a)`
@@ -321,16 +375,16 @@ f(b) - f(a) = f′(c)(b - a)
 
 **28. L'Hopital's Rule** `\lim_{x \to c} \frac{f(x)}{g(x)} = \lim_{x \to c} \frac{f^{\prime}(x)}{g^{\prime}(x)}`
 ```
-      f(x)         f′(x)
-lim   ──── = lim   ─────
-x→c   g(x)   x→c   g′(x)
+    f(x)       f′(x)
+lim ──── = lim ─────
+x→c g(x)   x→c g′(x)
 ```
 
 **29. Euler-Mascheroni Constant** `\gamma = \lim_{n \to \infty} \left(\sum_{k=1}^{n} \frac{1}{k} - \ln n\right)`
 ```
-          ⎛ n   1        ⎞
-γ = lim   ⎜ ∑  ─── - ln n⎟
-    n→∞   ⎝k=1  k        ⎠
+        ⎛ n   1        ⎞
+γ = lim ⎜ ∑  ─── - ln n⎟
+    n→∞ ⎝k=1  k        ⎠
 ```
 
 **30. Stirling's Approximation** `n! \approx \sqrt{2\pi n} \left(\frac{n}{e}\right)^n`
@@ -350,12 +404,12 @@ sin² θ + cos² θ = 1
 
 **32. Sine Addition** `\sin(\alpha + \beta) = \sin \alpha \cos \beta + \cos \alpha \sin \beta`
 ```
-sin (α + β) = sin α cos β + cos α sin β
+sin(α + β) = sin α cos β + cos α sin β
 ```
 
 **33. Cosine Addition** `\cos(\alpha + \beta) = \cos \alpha \cos \beta - \sin \alpha \sin \beta`
 ```
-cos (α + β) = cos α cos β - sin α sin β
+cos(α + β) = cos α cos β - sin α sin β
 ```
 
 **34. Euler's Formula** `e^{i\theta} = \cos \theta + i \sin \theta`
@@ -409,14 +463,14 @@ det ⎣ c  d ⎦ = ad - bc
 
 **42. Kronecker Delta** `\delta_{ij} = \begin{cases} 1 & \text{if } i = j \\ 0 & \text{if } i \neq j \end{cases}`
 ```
-      ⎧ 1  if  i = j
-δᵢⱼ = ⎩ 0  if  i ≠ j
+      ⎧ 1  if i = j
+δᵢⱼ = ⎩ 0  if i ≠ j
 ```
 
 **43. Matrix Inverse (2x2)** `A^{-1} = \frac{1}{ad - bc} \begin{bmatrix} d & -b \\ -c & a \end{bmatrix}`
 ```
-         1   ⎡ d   -b ⎤
-A⁻¹ = ───────⎣ -c  a  ⎦
+         1    ⎡ d   -b ⎤
+A⁻¹ = ─────── ⎣ -c  a  ⎦
       ad - bc
 ```
 
@@ -427,14 +481,14 @@ Av = λv
 
 **45. Characteristic Polynomial** `\det(A - \lambda I) = 0`
 ```
-det (A - λI) = 0
+det(A - λI) = 0
 ```
 
 **46. Dot Product** `a \cdot b = \sum_{i=1}^{n} a_i b_i`
 ```
-       n
-a·b =  ∑  aᵢbᵢ
-      i=1
+         n
+a · b =  ∑  aᵢbᵢ
+        i=1
 ```
 
 **47. Cross Product** `a \times b = \begin{vmatrix} i & j & k \\ a_1 & a_2 & a_3 \\ b_1 & b_2 & b_3 \end{vmatrix}`
@@ -451,9 +505,9 @@ a × b = │ a₁  a₂  a₃ │
 
 **49. Trace** `\text{tr}(A) = \sum_{i=1}^{n} a_{ii}`
 ```
-          n
-tr (A) =  ∑  aᵢᵢ
-         i=1
+         n
+tr(A) =  ∑  aᵢᵢ
+        i=1
 ```
 
 **50. Rotation Matrix** `R(\theta) = \begin{bmatrix} \cos \theta & -\sin \theta \\ \sin \theta & \cos \theta \end{bmatrix}`
@@ -477,15 +531,15 @@ E = mc²
 **53. Kinetic Energy** `E_k = \frac{1}{2}mv^2`
 ```
       1
-Eₖ = ───mv²
+Eₖ = ─── mv²
       2
 ```
 
 **54. Gravitational Force** `F = G\frac{m_1 m_2}{r^2}`
 ```
-     m₁m₂
-F = G────
-      r²
+      m₁m₂
+F = G ────
+       r²
 ```
 
 **55. Gravitational Potential Energy** `U = -\frac{Gm_1 m_2}{r}`
@@ -504,14 +558,14 @@ vₑ = √⎜───⎟
 
 **57. Simple Harmonic Motion** `x(t) = A\cos(\omega t + \phi)`
 ```
-x(t) = A cos (ωt + φ)
+x(t) = A cos(ωt + φ)
 ```
 
 **58. Euler-Lagrange Equation** `\frac{d}{dt}\frac{\partial L}{\partial v} - \frac{\partial L}{\partial q} = 0`
 ```
- d   ∂L     ∂L
-──────── - ──── = 0
- dt  ∂v     ∂q
+ d    ∂L     ∂L
+──── ──── - ──── = 0
+ dt   ∂v     ∂q
 ```
 
 **59. Hamilton's Equation** `\frac{dq}{dt} = \frac{\partial H}{\partial p}`
@@ -532,14 +586,14 @@ a = ────
 
 **61. Gauss's Law** `\nabla \cdot E = \frac{\rho}{\epsilon_0}`
 ```
-       ρ
-∇·E = ────
-       ε₀
+         ρ
+∇ · E = ────
+         ε₀
 ```
 
 **62. Gauss's Law (Magnetism)** `\nabla \cdot B = 0`
 ```
-∇·B = 0
+∇ · B = 0
 ```
 
 **63. Faraday's Law** `\nabla \times E = -\frac{\partial B}{\partial t}`
@@ -551,16 +605,16 @@ a = ────
 
 **64. Ampere's Law** `\nabla \times B = \mu_0 J + \mu_0 \epsilon_0 \frac{\partial E}{\partial t}`
 ```
-                   ∂E
-∇ × B = μ₀J + μ₀ε₀────
-                   ∂t
+                    ∂E
+∇ × B = μ₀J + μ₀ε₀ ────
+                    ∂t
 ```
 
 **65. Coulomb's Law** `F = \frac{1}{4\pi\epsilon_0} \cdot \frac{q_1 q_2}{r^2}`
 ```
-     1   q₁q₂
-F = ────·────
-    4πε₀  r²
+     1     q₁q₂
+F = ──── · ────
+    4πε₀    r²
 ```
 
 **66. Lorentz Force** `F = q(E + v \times B)`
@@ -576,21 +630,21 @@ V = IR
 **68. Capacitor Energy** `E = \frac{1}{2}CV^2`
 ```
      1
-E = ───CV²
+E = ─── CV²
      2
 ```
 
 **69. Biot-Savart Law** `dB = \frac{\mu_0}{4\pi} \frac{I \, dl \times \hat{r}}{r^2}`
 ```
-      μ₀ I dl × r̂
-dB = ────────────
-      4π    r²
+      μ₀  I dl × r̂
+dB = ──── ────────
+      4π     r²
 ```
 
 **70. Poynting Vector** `S = \frac{1}{\mu_0} E \times B`
 ```
      1
-S = ────E × B
+S = ──── E × B
      μ₀
 ```
 
@@ -598,9 +652,9 @@ S = ────E × B
 
 **71. Schrodinger Equation** `i\hbar\frac{\partial}{\partial t}\Psi = \hat{H}\Psi`
 ```
-   ∂
-iℏ────Ψ = ĤΨ
-   ∂t
+    ∂
+iℏ ──── Ψ = ĤΨ
+    ∂t
 ```
 
 **72. Heisenberg Uncertainty** `\Delta x \, \Delta p \geq \frac{\hbar}{2}`
@@ -685,8 +739,7 @@ S = k  ln Ω
          T
           c
 η = 1 - ────
-         T
-          h
+         Tₕ
 ```
 
 **85. Stefan-Boltzmann Law** `P = \sigma A T^4`
@@ -696,19 +749,18 @@ P = σAT⁴
 
 **86. Maxwell-Boltzmann Distribution** `f(v) = 4\pi n \left(\frac{m}{2\pi kT}\right)^{3/2} v^2 e^{-mv^2/2kT}`
 ```
-                3/2      2
-          ⎛ m  ⎞    2 -mv /2kT
-f(v) = 4πn⎜────⎟   v e
+                3/2
+          ⎛ m  ⎞      -mv²/2kT
+f(v) = 4πn⎜────⎟   v²e
           ⎝2πkT⎠
 ```
 
 **87. Planck's Law** `B(\nu) = \frac{2h\nu^3}{c^2} \cdot \frac{1}{e^{h\nu/kT} - 1}`
 ```
-          3
-       2hν      1
-B(ν) = ────·──────────
-         2   hν/kT
-        c   e      - 1
+       2hν³       1
+B(ν) = ──── · ──────────
+        c²     hν/kT
+              e      - 1
 ```
 
 **88. Gibbs Free Energy** `G = H - TS`
@@ -718,33 +770,31 @@ G = H - TS
 
 **89. Clausius Inequality** `\oint \frac{dQ}{T} \leq 0`
 ```
-  dQ
-∮──── ≤ 0
-  T
+   dQ
+∮ ──── ≤ 0
+   T
 ```
 
 **90. Equipartition Theorem** `\langle E \rangle = \frac{f}{2} k_B T`
 ```
        f
-⟨E⟩ = ───k T
-       2  B
+⟨E⟩ = ─── k T
+       2   B
 ```
 
 ### Probability and Information
 
 **91. Bayes' Theorem** `P(A \mid B) = \frac{P(B \mid A) \, P(A)}{P(B)}`
 ```
-         P(B|A) P(A)
-P(A|B) = ───────────
-            P(B)
+           P(B | A) P(A)
+P(A | B) = ─────────────
+               P(B)
 ```
 
 **92. Normal Distribution** `f(x) = \frac{1}{\sigma\sqrt{2\pi}} e^{-\frac{(x - \mu)^2}{2\sigma^2}}`
 ```
-                (x-μ)²
-              - ──────
-         1       2σ²
-f(x) = ──────e
+         1     -(x-μ)²/(2σ²)
+f(x) = ────── e
        σ√(2π)
 ```
 
@@ -756,7 +806,7 @@ E[X] = ∑ xᵢ P(xᵢ)
 
 **94. Variance** `\text{Var}(X) = E[X^2] - (E[X])^2`
 ```
-Var (X) = E[X²] - (E[X])²
+Var(X) = E[X²] - (E[X])²
 ```
 
 **95. Shannon Entropy** `H = -\sum_{i} p_i \log_2 p_i`
@@ -768,7 +818,7 @@ H = -∑ pᵢ log₂ pᵢ
 **96. Bernoulli Trial** `P(k) = \frac{n!}{k!(n-k)!} p^k (1-p)^{n-k}`
 ```
            n!
-P(k) = ──────────pᵏ(1 - p)ⁿ⁻ᵏ
+P(k) = ────────── pᵏ(1 - p)ⁿ⁻ᵏ
        k!(n - k)!
 ```
 
@@ -776,9 +826,9 @@ P(k) = ──────────pᵏ(1 - p)ⁿ⁻ᵏ
 
 **97. Golden Ratio** `\phi = \frac{1 + \sqrt{5}}{2}`
 ```
-    1 + √(5)
-φ = ────────
-       2
+    1 + √5
+φ = ──────
+      2
 ```
 
 **98. Euler Product (Riemann Zeta)** `\zeta(s) = \sum_{n=1}^{\infty} \frac{1}{n^s} = \prod_{p} \frac{1}{1 - p^{-s}}`
@@ -798,8 +848,8 @@ P(k) = ──────────pᵏ(1 - p)ⁿ⁻ᵏ
 **100. Euler's Reflection Formula** `\Gamma(z)\Gamma(1-z) = \frac{\pi}{\sin(\pi z)}`
 ```
                   π
-Γ(z)Γ(1 - z) = ────────
-               sin (πz)
+Γ(z)Γ(1 - z) = ───────
+               sin(πz)
 ```
 
 <!-- END GALLERY -->

@@ -24,7 +24,9 @@ func (r *mathRenderer) renderMathInline(w util.BufWriter, source []byte, node as
 		return ast.WalkContinue, nil
 	}
 	n := node.(*MathInline)
-	rendered, err := termtex.Render(string(n.Expression), r.Style)
+	style := r.Style
+	style.Inline = true
+	rendered, err := termtex.Render(string(n.Expression), style)
 	if err != nil {
 		// Fall back to raw expression
 		w.WriteString("$")
@@ -41,7 +43,9 @@ func (r *mathRenderer) renderMathBlock(w util.BufWriter, source []byte, node ast
 		return ast.WalkContinue, nil
 	}
 	n := node.(*MathBlock)
-	rendered, err := termtex.Render(string(n.Expression), r.Style)
+	style := r.Style
+	style.Inline = false
+	rendered, err := termtex.Render(string(n.Expression), style)
 	if err != nil {
 		w.WriteString("$$")
 		w.Write(n.Expression)

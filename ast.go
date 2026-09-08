@@ -23,6 +23,8 @@ const (
 	nodeHat                        // \hat / \dot / \ddot / \tilde / \vec
 	nodeOverbrace                  // \overbrace{expr}^{label}
 	nodeUnderbrace                 // \underbrace{expr}_{label}
+	nodeXArrow                     // \xrightarrow[below]{above}; Value is the arrow head
+	nodeStyle                      // \displaystyle etc.: Value names the style, Children[0] is the rest of the list
 )
 
 // node represents a single element in the math AST.
@@ -35,18 +37,29 @@ type node struct {
 	Open  string // opening delimiter
 	Close string // closing delimiter
 
-	// For matrix
+	// For matrix. Value carries the environment kind ("" for plain
+	// matrices, "cases", "align", "gather", "array"); Cols holds the
+	// per-column alignment letters of an array environment.
 	Rows [][]*node
+	Cols string
 
 	// For nodeSpace: width in cells (0 is meaningful — see \!)
 	Width int
 
+	// class overrides the atom class derived from Type/Value (see
+	// spacing.go). Set by the parser for e.g. \mid (a relation drawn
+	// with the same glyph as the Ord bar) and named functions.
+	class atomClass
+
+	// limits records \limits (+1) / \nolimits (-1) on a big operator.
+	limits int8
+
 	// Per-pass measurement cache. Each Render call runs against a
 	// fresh AST, so storing the result on the node itself avoids a
 	// map allocation per pass and a hash lookup per measure() call.
-	// boxes[0] = non-compact box, boxes[1] = compact box. measured
-	// bit 0/1 tells which slot is populated.
-	boxes    [2]box
+	// One slot per math style; measured bit i tells whether boxes[i]
+	// is populated.
+	boxes    [4]box
 	measured uint8
 }
 

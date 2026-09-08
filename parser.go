@@ -35,11 +35,31 @@ const (
 // spaceWidths is the canonical width table for LaTeX spacing commands.
 // The lexer emits these as tokSpace; the parser reads the width here.
 var spaceWidths = map[string]int{
-	"\\,":     1,
-	"\\;":     1,
-	"\\!":     0,
-	"\\quad":  2,
-	"\\qquad": 4,
+	"\\,":             1,
+	"\\;":             1,
+	"\\!":             0,
+	"\\quad":          2,
+	"\\qquad":         4,
+	"\\thinspace":     1,
+	"\\medspace":      1,
+	"\\thickspace":    1,
+	"\\enspace":       1,
+	"\\enskip":        1,
+	"\\negthinspace":  0,
+	"\\negmedspace":   0,
+	"\\negthickspace": 0,
+	"\\mathstrut":     0,
+	"\\allowbreak":    0,
+	"\\nobreak":       0,
+	"\\strut":         0,
+}
+
+// textArgCommands take a verbatim text argument; the lexer slurps
+// their brace group whole so inner whitespace survives.
+var textArgCommands = map[string]bool{
+	"text": true, "mathrm": true, "textrm": true, "textbf": true,
+	"textit": true, "textsf": true, "texttt": true, "textnormal": true,
+	"textup": true, "mbox": true, "hbox": true,
 }
 
 type token struct {
@@ -142,6 +162,10 @@ func (l *lexer) run() {
 			l.emit(tokAmpersand, "&")
 		case r == '\\':
 			l.lexCommand()
+		case r == '~':
+			// A tie is a non-breaking space in math mode.
+			l.pos += size
+			l.emit(tokSpace, "\\,")
 		case r >= '0' && r <= '9':
 			l.lexNumber()
 		case isOperator(r):
@@ -176,9 +200,11 @@ func (l *lexer) lexCommand() {
 		switch r {
 		case '{', '}':
 			l.emit(tokSymbol, string(r))
-		case ',':
+		case '|':
+			l.emit(tokSymbol, "‖") // \| is the double bar (norm)
+		case ',', ' ':
 			l.emit(tokSpace, "\\,")
-		case ';':
+		case ';', ':', '>':
 			l.emit(tokSpace, "\\;")
 		case '!':
 			l.emit(tokSpace, "\\!")
@@ -201,7 +227,11 @@ func (l *lexer) lexCommand() {
 		l.emit(tokSpace, "\\"+cmd)
 		return
 	}
-	if cmd == "text" || cmd == "mathrm" || cmd == "textrm" {
+	if cmd == "cr" {
+		l.emit(tokNewline, "\\\\")
+		return
+	}
+	if textArgCommands[cmd] {
 		l.lexTextArg(cmd)
 		return
 	}
@@ -314,12 +344,57 @@ type parser struct {
 func parse(input string) (*node, error) {
 	tp := lex(input)
 	p := &parser{tokens: *tp}
-	node, err := p.parseExpr()
+	node, err := p.parseRows()
 	releaseTokens(tp)
 	if err != nil {
 		return nil, err
 	}
 	return node, nil
+}
+
+// parseRows parses a top-level expression that may contain `\\` line
+// breaks and `&` alignment points outside any environment, as people
+// write inside $$...$$. A single cell is returned as-is; multiple rows
+// become a gather (centered) or, when any row has an `&`, an align.
+func (p *parser) parseRows() (*node, error) {
+	var rows [][]*node
+	var row []*node
+	aligned := false
+	for {
+		cell, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		row = append(row, cell)
+		t := p.peek()
+		if t.typ == tokAmpersand {
+			p.next()
+			aligned = true
+			continue
+		}
+		rows = append(rows, row)
+		row = nil
+		if t.typ == tokNewline {
+			p.next()
+			continue
+		}
+		break
+	}
+	// A trailing `\\` leaves an empty final row; drop it.
+	if len(rows) > 1 {
+		last := rows[len(rows)-1]
+		if len(last) == 1 && last[0].Type == nodeGroup && len(last[0].Children) == 0 {
+			rows = rows[:len(rows)-1]
+		}
+	}
+	if len(rows) == 1 && len(rows[0]) == 1 {
+		return rows[0][0], nil
+	}
+	kind := "gather"
+	if aligned {
+		kind = "align"
+	}
+	return &node{Type: nodeMatrix, Rows: rows, Value: kind}, nil
 }
 
 func (p *parser) peek() token {
@@ -363,6 +438,19 @@ func (p *parser) parseExprUntil(stops ...tokenType) (*node, error) {
 		// Stop on \end and \right — these terminate enclosing constructs
 		if t.typ == tokCommand && (t.val == "end" || t.val == "right") {
 			goto done
+		}
+		// \displaystyle and friends apply to the rest of the current
+		// list: wrap everything that follows in a style node.
+		if t.typ == tokCommand {
+			if _, ok := styleSwitches[t.val]; ok {
+				p.next()
+				rest, err := p.parseExprUntil(stops...)
+				if err != nil {
+					return nil, err
+				}
+				nodes = append(nodes, &node{Type: nodeStyle, Value: t.val, Children: []*node{rest}})
+				goto done
+			}
 		}
 		atom, err := p.parseAtom()
 		if err != nil {
@@ -594,7 +682,18 @@ var operatorCommands = map[string]string{
 	"setminus":       "∖",
 	"langle":         "⟨",
 	"rangle":         "⟩",
+	"lfloor":         "⌊",
+	"rfloor":         "⌋",
+	"lceil":          "⌈",
+	"rceil":          "⌉",
+	"lvert":          "|",
+	"rvert":          "|",
+	"vert":           "|",
+	"lVert":          "‖",
+	"rVert":          "‖",
+	"Vert":           "‖",
 	"mid":            "|",
+	"colon":          ":",
 	"ldots":          "…",
 	"dots":           "…",
 	"cdots":          "⋯",
@@ -617,31 +716,48 @@ var textCommands = map[string]struct{}{
 // mathStyleTransforms maps \mathX → the text-transform function used
 // to rewrite the argument's letters.
 var mathStyleTransforms = map[string]func(string) string{
-	"mathbf":   mathBold,
-	"mathbb":   mathDoubleStruck,
-	"mathcal":  mathScript,
-	"mathfrak": mathFraktur,
-	"mathsf":   mathSansSerif,
-	"mathit":   mathItalic,
+	"mathbf":     mathBold,
+	"boldsymbol": mathBold,
+	"bm":         mathBold,
+	"pmb":        mathBold,
+	"mathbb":     mathDoubleStruck,
+	"mathcal":    mathScript,
+	"mathscr":    mathScript,
+	"mathfrak":   mathFraktur,
+	"mathsf":     mathSansSerif,
+	"mathit":     mathItalic,
+	"mathtt":     mathMonospace,
+	"mathnormal": func(s string) string { return s },
+	"cancel":     mathCancel,
+	"sout":       mathStrike,
 }
 
 // accentKinds maps single-arg accent commands → the kind tag stored on
 // the resulting nodeHat (used by the renderer to pick the glyph).
 var accentKinds = map[string]string{
-	"hat":   "hat",
-	"vec":   "vec",
-	"dot":   "dot",
-	"ddot":  "ddot",
-	"tilde": "tilde",
+	"hat":      "hat",
+	"vec":      "vec",
+	"dot":      "dot",
+	"ddot":     "ddot",
+	"dddot":    "dddot",
+	"tilde":    "tilde",
+	"bar":      "bar",
+	"breve":    "breve",
+	"check":    "check",
+	"acute":    "acute",
+	"grave":    "grave",
+	"mathring": "ring",
 }
 
 // wideAccents maps wide-accent commands → the kind tag stored on the
 // resulting nodeOverline.
 var wideAccents = map[string]string{
-	"overline":  "",
-	"bar":       "", // \bar collapses to \overline for our purposes
-	"widehat":   "hat",
-	"widetilde": "tilde",
+	"overline":           "",
+	"widehat":            "hat",
+	"widetilde":          "tilde",
+	"overrightarrow":     "rightarrow",
+	"overleftarrow":      "leftarrow",
+	"overleftrightarrow": "leftrightarrow",
 }
 
 // bigOpKinds maps big-operator commands → (nodeType, glyph).
@@ -649,10 +765,21 @@ var bigOpKinds = map[string]struct {
 	typ nodeType
 	sym string
 }{
-	"sum":  {nodeBigOp, "∑"},
-	"prod": {nodeBigOp, "∏"},
-	"int":  {nodeBigOp, "∫"},
-	"oint": {nodeBigOp, "∮"},
+	"sum":       {nodeBigOp, "∑"},
+	"prod":      {nodeBigOp, "∏"},
+	"coprod":    {nodeBigOp, "∐"},
+	"int":       {nodeBigOp, "∫"},
+	"iint":      {nodeBigOp, "∬"},
+	"iiint":     {nodeBigOp, "∭"},
+	"oint":      {nodeBigOp, "∮"},
+	"oiint":     {nodeBigOp, "∯"},
+	"bigcup":    {nodeBigOp, "⋃"},
+	"bigcap":    {nodeBigOp, "⋂"},
+	"bigoplus":  {nodeBigOp, "⨁"},
+	"bigotimes": {nodeBigOp, "⨂"},
+	"bigvee":    {nodeBigOp, "⋁"},
+	"bigwedge":  {nodeBigOp, "⋀"},
+	"bigsqcup":  {nodeBigOp, "⨆"},
 }
 
 func (p *parser) parseCommand() (*node, error) {
@@ -661,11 +788,28 @@ func (p *parser) parseCommand() (*node, error) {
 	if sym, ok := symbolCommands[t.val]; ok {
 		return symNode(sym), nil
 	}
+	if limitOps[t.val] {
+		return &node{Type: nodeLim, Value: t.val}, nil
+	}
+	if sizeCommands[t.val] {
+		// \bigl( etc: sizes come from content, so only the delimiter
+		// that follows matters.
+		return spaceNode(0), nil
+	}
 	if op, ok := operatorCommands[t.val]; ok {
-		return opNode(op), nil
+		n := opNode(op)
+		switch t.val {
+		case "mid":
+			n.class = atomRel // same glyph as the Ord bar, relation spacing
+		case "colon":
+			n.class = atomPunct // `f\colon X → Y`: space after, none before
+		}
+		return n, nil
 	}
 	if _, ok := textCommands[t.val]; ok {
-		return textNode(t.val), nil
+		n := textNode(t.val)
+		n.class = atomOp // named function: `sin x`, `det(A)`
+		return n, nil
 	}
 	if transform, ok := mathStyleTransforms[t.val]; ok {
 		return p.parseMathStyle(transform)
@@ -683,17 +827,85 @@ func (p *parser) parseCommand() (*node, error) {
 	switch t.val {
 	case "frac":
 		return p.parseFrac()
+	case "binom":
+		// Binomial coefficient: a two-row stack in parentheses, laid
+		// out by the matrix machinery.
+		top, err := p.parseRequiredArg()
+		if err != nil {
+			return nil, fmt.Errorf("binom top: %w", err)
+		}
+		bot, err := p.parseRequiredArg()
+		if err != nil {
+			return nil, fmt.Errorf("binom bottom: %w", err)
+		}
+		return &node{Type: nodeMatrix, Rows: [][]*node{{top}, {bot}}, Open: "(", Close: ")"}, nil
+	case "dfrac", "tfrac":
+		n, err := p.parseFrac()
+		if err != nil {
+			return nil, err
+		}
+		n.Value = t.val[:1] // "d" forces stacked, "t" forces flat
+		return n, nil
+	case "notag", "nonumber":
+		// Equation numbering carries no glyphs; a zero-width space
+		// keeps the surrounding list intact.
+		return spaceNode(0), nil
+	case "label", "tag":
+		// Consume and discard the argument.
+		if _, err := p.parseRequiredArg(); err != nil {
+			return nil, err
+		}
+		return spaceNode(0), nil
 	case "sqrt":
 		return p.parseSqrt()
-	case "text", "mathrm", "textrm":
-		return p.parseText()
 	case "left":
 		return p.parseLeftRight()
 	case "right":
 		// should not hit this standalone; return nil
 		return nil, nil
-	case "lim":
-		return &node{Type: nodeLim, Value: "lim"}, nil
+	case "not":
+		return p.parseNot()
+	case "bmod":
+		n := textNode("mod")
+		n.class = atomBin
+		return n, nil
+	case "pmod", "pod":
+		// `a ≡ b (mod n)`: a thick space, then the parenthesised
+		// operator and its argument.
+		arg, err := p.parseRequiredArg()
+		if err != nil {
+			return nil, fmt.Errorf("\\%s: %w", t.val, err)
+		}
+		var inner *node
+		if t.val == "pmod" {
+			mod := textNode("mod")
+			mod.class = atomOp
+			inner = groupNode(mod, arg)
+		} else {
+			inner = arg
+		}
+		return groupNode(spaceNode(1), parenNode("(", ")", inner)), nil
+	case "operatorname", "mathop", "DeclareMathOperator":
+		return p.parseOperatorName()
+	case "substack":
+		return p.parseSubstack()
+	case "phantom", "hphantom":
+		arg, err := p.parseRequiredArg()
+		if err != nil {
+			return nil, err
+		}
+		return &node{Type: nodeSpace, Children: []*node{arg}}, nil
+	case "vphantom", "smash":
+		if _, err := p.parseRequiredArg(); err != nil {
+			return nil, err
+		}
+		return spaceNode(0), nil
+	case "overset", "stackrel":
+		return p.parseOverUnderSet(true)
+	case "underset":
+		return p.parseOverUnderSet(false)
+	case "xrightarrow", "xleftarrow", "xleftrightarrow", "xRightarrow", "xLeftarrow", "xmapsto", "xhookrightarrow", "xrightharpoonup":
+		return p.parseXArrow(t.val)
 	case "underline":
 		return p.parseUnderline()
 	case "overbrace":
@@ -703,9 +915,167 @@ func (p *parser) parseCommand() (*node, error) {
 	case "begin":
 		return p.parseEnvironment()
 	default:
-		// Unknown command: render as text
-		return textNode(t.val), nil
+		if textArgCommands[t.val] {
+			return p.parseText()
+		}
+		// Unknown command: render its name as text, spaced like a
+		// named function so `\foo{x}` reads `foo x` rather than `foox`.
+		n := textNode(t.val)
+		n.class = atomOp
+		return n, nil
 	}
+}
+
+// parseNot negates the relation that follows: `\not\in` → ∉, `\not=`
+// → ≠. Relations without a precomposed negation get a combining long
+// solidus overlay.
+func (p *parser) parseNot() (*node, error) {
+	arg, err := p.parseAtom()
+	if err != nil {
+		return nil, err
+	}
+	if arg == nil {
+		return opNode("̸"), nil
+	}
+	if arg.Type == nodeOperator || arg.Type == nodeSymbol {
+		if neg, ok := negations[arg.Value]; ok {
+			arg.Value = neg
+			return arg, nil
+		}
+		arg.Value += "̸"
+		return arg, nil
+	}
+	return arg, nil
+}
+
+// parseOperatorName handles \operatorname{name}, \operatorname*{name}
+// and \mathop{name}: the argument's letters become one upright
+// operator. The starred form (and \mathop) takes limits like \lim.
+func (p *parser) parseOperatorName() (*node, error) {
+	limits := false
+	if t := p.peek(); t.typ == tokOperator && t.val == "*" {
+		p.next()
+		limits = true
+	}
+	arg, err := p.parseRequiredArg()
+	if err != nil {
+		return nil, fmt.Errorf("\\operatorname: %w", err)
+	}
+	name := flattenText(arg)
+	if limits {
+		return &node{Type: nodeLim, Value: name}, nil
+	}
+	n := textNode(name)
+	n.class = atomOp
+	return n, nil
+}
+
+// flattenText concatenates the leaf text of n (symbols, numbers,
+// operators, text) — used for operator names and array column specs.
+func flattenText(n *node) string {
+	if n == nil {
+		return ""
+	}
+	switch n.Type {
+	case nodeSymbol, nodeNumber, nodeOperator, nodeText:
+		return n.Value
+	case nodeSpace:
+		if n.Width > 0 {
+			return " "
+		}
+		return ""
+	}
+	var s string
+	for _, ch := range n.Children {
+		s += flattenText(ch)
+	}
+	return s
+}
+
+// parseSubstack parses \substack{a \\ b}: a brace group whose rows
+// are stacked and centered, typically inside a big-operator limit.
+func (p *parser) parseSubstack() (*node, error) {
+	if _, err := p.expect(tokLBrace); err != nil {
+		return nil, fmt.Errorf("\\substack: %w", err)
+	}
+	var rows [][]*node
+	for {
+		cell, err := p.parseExprUntil(tokNewline, tokRBrace, tokEOF)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, []*node{cell})
+		if p.peek().typ != tokNewline {
+			break
+		}
+		p.next()
+	}
+	if _, err := p.expect(tokRBrace); err != nil {
+		return nil, fmt.Errorf("\\substack: %w", err)
+	}
+	return &node{Type: nodeMatrix, Rows: rows, Value: "gather"}, nil
+}
+
+// parseOverUnderSet handles \overset{top}{base} and \underset{bot}{base}
+// by attaching the annotation as a stacked script of the base.
+func (p *parser) parseOverUnderSet(over bool) (*node, error) {
+	ann, err := p.parseRequiredArg()
+	if err != nil {
+		return nil, err
+	}
+	base, err := p.parseRequiredArg()
+	if err != nil {
+		return nil, err
+	}
+	if base == nil {
+		base = groupNode()
+	}
+	base.limits = 2 // force the stacked layout regardless of style
+	if over {
+		return scriptNode(base, nil, ann), nil
+	}
+	return scriptNode(base, ann, nil), nil
+}
+
+// parseXArrow handles \xrightarrow[below]{above} and friends: an
+// arrow stretched to the width of its labels.
+func (p *parser) parseXArrow(cmd string) (*node, error) {
+	var below *node
+	if p.peek().typ == tokLBracket {
+		p.next()
+		b, err := p.parseExprUntil(tokRBracket)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(tokRBracket); err != nil {
+			return nil, fmt.Errorf("\\%s: %w", cmd, err)
+		}
+		below = b
+	}
+	above, err := p.parseRequiredArg()
+	if err != nil {
+		return nil, err
+	}
+	head := "→"
+	switch cmd {
+	case "xleftarrow":
+		head = "←"
+	case "xleftrightarrow":
+		head = "↔"
+	case "xRightarrow":
+		head = "⇒"
+	case "xLeftarrow":
+		head = "⇐"
+	case "xmapsto":
+		head = "↦"
+	case "xhookrightarrow":
+		head = "↪"
+	case "xrightharpoonup":
+		head = "⇀"
+	}
+	n := &node{Type: nodeXArrow, Value: head, Children: []*node{above, below}}
+	n.class = atomRel
+	return n, nil
 }
 
 func (p *parser) parseMathStyle(transform func(string) string) (*node, error) {
@@ -765,11 +1135,7 @@ func (p *parser) parseText() (*node, error) {
 
 func (p *parser) parseLeftRight() (*node, error) {
 	// \left( ... \right)
-	openTok := p.next()
-	open := openTok.val
-	if open == "." {
-		open = "" // \left. means invisible delimiter
-	}
+	open := p.parseDelimiterToken()
 
 	node, err := p.parseExpr()
 	if err != nil {
@@ -780,13 +1146,33 @@ func (p *parser) parseLeftRight() (*node, error) {
 	if p.peek().typ == tokCommand && p.peek().val == "right" {
 		p.next() // consume \right
 	}
-	closeTok := p.next()
-	close := closeTok.val
-	if close == "." {
-		close = ""
-	}
+	close := p.parseDelimiterToken()
 
 	return parenNode(open, close, node), nil
+}
+
+// parseDelimiterToken consumes the token after \left or \right and
+// returns the delimiter glyph: a literal like `(`, a command such as
+// \langle or \lfloor resolved through the operator table, or "" for
+// the invisible `.` delimiter.
+func (p *parser) parseDelimiterToken() string {
+	t := p.next()
+	switch t.typ {
+	case tokCommand:
+		if d, ok := operatorCommands[t.val]; ok {
+			return d
+		}
+		if d, ok := symbolCommands[t.val]; ok {
+			return d
+		}
+		return t.val
+	case tokEOF:
+		return ""
+	}
+	if t.val == "." {
+		return "" // \left. means invisible delimiter
+	}
+	return t.val
 }
 
 func (p *parser) parseBigOp(typ nodeType, sym string) (*node, error) {
@@ -850,13 +1236,51 @@ func (p *parser) parseEnvironment() (*node, error) {
 		return nil, fmt.Errorf("\\begin{%s}: %w", envName, err)
 	}
 
+	envName = strings.TrimSuffix(envName, "*")
 	switch envName {
-	case "pmatrix", "bmatrix", "matrix", "vmatrix", "Bmatrix", "Vmatrix", "cases":
-		return p.parseMatrix(envName)
+	case "pmatrix", "bmatrix", "matrix", "vmatrix", "Bmatrix", "Vmatrix":
+		return p.parseMatrix(envName, "", "")
+	case "cases":
+		return p.parseMatrix(envName, "cases", "")
+	case "align", "aligned", "alignat", "alignedat", "split", "eqnarray", "flalign":
+		return p.parseMatrix(envName, "align", "")
+	case "gather", "gathered", "multline":
+		return p.parseMatrix(envName, "gather", "")
+	case "array":
+		// Column spec like {lcr} or {c|c}; letters map to alignment,
+		// everything else (rules) is ignored.
+		spec, err := p.parseRequiredArg()
+		if err != nil {
+			return nil, fmt.Errorf("\\begin{array}: %w", err)
+		}
+		return p.parseMatrix(envName, "array", arrayColumns(spec))
 	default:
 		// skip until \end{envName}
 		return textNode("\\begin{" + envName + "}"), nil
 	}
+}
+
+// arrayColumns flattens an array column spec ({lcr}, {c|c}) into a
+// string of alignment letters.
+func arrayColumns(spec *node) string {
+	var cols []byte
+	var walk func(*node)
+	walk = func(n *node) {
+		if n == nil {
+			return
+		}
+		if n.Type == nodeSymbol {
+			switch n.Value {
+			case "l", "c", "r":
+				cols = append(cols, n.Value[0])
+			}
+		}
+		for _, ch := range n.Children {
+			walk(ch)
+		}
+	}
+	walk(spec)
+	return string(cols)
 }
 
 // consumeEnd parses `\end{anything}`, returning a parse error if the
@@ -881,7 +1305,7 @@ func (p *parser) atEnd() bool {
 	return t.typ == tokCommand && t.val == "end"
 }
 
-func (p *parser) parseMatrix(envName string) (*node, error) {
+func (p *parser) parseMatrix(envName, kind, cols string) (*node, error) {
 	var rows [][]*node
 	var currentRow []*node
 
@@ -922,8 +1346,16 @@ func (p *parser) parseMatrix(envName string) (*node, error) {
 		rows = append(rows, currentRow)
 	}
 
+	// Drop a trailing empty row left by `\\` before \end.
+	if len(rows) > 1 {
+		last := rows[len(rows)-1]
+		if len(last) == 1 && last[0].Type == nodeGroup && len(last[0].Children) == 0 {
+			rows = rows[:len(rows)-1]
+		}
+	}
+
 	open, close := matrixDelimiters(envName)
-	node := &node{Type: nodeMatrix, Rows: rows, Open: open, Close: close}
+	node := &node{Type: nodeMatrix, Rows: rows, Open: open, Close: close, Value: kind, Cols: cols}
 	return node, nil
 }
 
@@ -956,6 +1388,27 @@ func (p *parser) parsePostfix(base *node) (*node, error) {
 		}
 		return base, nil
 	}
+
+	// \limits / \nolimits directly after a big operator override where
+	// its limits go.
+	if base != nil && isBigOp(base) {
+		for {
+			t := p.peek()
+			if t.typ != tokCommand {
+				break
+			}
+			switch t.val {
+			case "limits":
+				base.limits = 1
+			case "nolimits":
+				base.limits = -1
+			default:
+				goto scripts
+			}
+			p.next()
+		}
+	}
+scripts:
 
 	hasSub := false
 	hasSup := false

@@ -1,6 +1,7 @@
 package termtex
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -78,20 +79,34 @@ func (c *canvas) set(x, y int, r rune) {
 	c.setColored(x, y, r, "")
 }
 
-func (c *canvas) setColored(x, y int, r rune, color string) {
-	if y >= 0 && y < c.height && x >= 0 && x < c.width {
-		c.cells[y*c.width+x] = cell{ch: r, color: color}
+// strictCanvas makes out-of-bounds writes panic instead of being
+// silently dropped. The test suite turns it on so that a measure pass
+// and a render pass that disagree about a box surface as a failure
+// rather than as clipped output.
+var strictCanvas bool
+
+func (c *canvas) outOfBounds(x, y int) {
+	if strictCanvas {
+		panic(fmt.Sprintf("termtex: canvas write (%d,%d) outside %dx%d", x, y, c.width, c.height))
 	}
 }
 
-// withCompactCtx runs fn with the canvas's compact flag set, restoring
-// it after. Used when rendering script content (sub/sup, big-op limits)
-// where operator spacing should be suppressed.
-func (c *canvas) withCompactCtx(fn func()) {
-	saved := c.ctx.compact
-	c.ctx.compact = true
+func (c *canvas) setColored(x, y int, r rune, color string) {
+	if y >= 0 && y < c.height && x >= 0 && x < c.width {
+		c.cells[y*c.width+x] = cell{ch: r, color: color}
+		return
+	}
+	c.outOfBounds(x, y)
+}
+
+// withScriptCtx runs fn with the canvas's math style stepped down to
+// script style, restoring it after. Used when rendering script content
+// (sub/sup, big-op limits), matching the style measure() used.
+func (c *canvas) withScriptCtx(fn func()) {
+	saved := c.ctx.style
+	c.ctx.style = saved.script()
 	fn()
-	c.ctx.compact = saved
+	c.ctx.style = saved
 }
 
 // setAccent attaches a combining mark (e.g. U+0302 for hat) to the
@@ -100,7 +115,9 @@ func (c *canvas) withCompactCtx(fn func()) {
 func (c *canvas) setAccent(x, y int, mark rune) {
 	if y >= 0 && y < c.height && x >= 0 && x < c.width {
 		c.cells[y*c.width+x].accent = mark
+		return
 	}
+	c.outOfBounds(x, y)
 }
 
 func (c *canvas) putStr(x, y int, s string) {
@@ -112,8 +129,16 @@ func (c *canvas) putStrColored(x, y int, s string, color string) {
 	for len(s) > 0 {
 		r, size := utf8.DecodeRuneInString(s)
 		s = s[size:]
+		if runeWidth(r) == 0 && col > x {
+			// Combining mark (\not, \cancel, styled accents): attach it
+			// to the cell just written rather than occupying the next.
+			c.setAccent(col-1, y, r)
+			continue
+		}
+		// A leading combining mark gets a cell of its own, matching
+		// displayWidth.
 		c.setColored(col, y, r, color)
-		col += runeWidth(r)
+		col += max(runeWidth(r), 1)
 	}
 }
 
@@ -218,7 +243,14 @@ func renderNode(c *canvas, n *node, x, y int) {
 	case nodeBigOp:
 		c.putStrColored(x, y, c.ctx.displayValue(n.Value), c.ctx.color(semBigOp))
 	case nodeLim:
-		c.putStrColored(x, y, "lim", c.ctx.color(semText))
+		c.putStrColored(x, y, n.Value, c.ctx.color(semText))
+	case nodeXArrow:
+		renderXArrow(c, n, x, y)
+	case nodeStyle:
+		saved := c.ctx.style
+		c.ctx.style = styleSwitches[n.Value]
+		renderNode(c, n.Children[0], x, y)
+		c.ctx.style = saved
 	case nodeOverline:
 		renderOverline(c, n, x, y)
 	case nodeUnderline:
@@ -234,30 +266,16 @@ func renderNode(c *canvas, n *node, x, y int) {
 
 func renderGroup(c *canvas, n *node, x, y int) {
 	box := measure(n, c.ctx)
-	// Binary-operator spacing (`a + b`) is suppressed in compact
-	// contexts (subscripts, big-op limits) so `i=1` stays tight.
-	// Text-operator spacing (`sin x`) stays on regardless — words need
-	// to remain readable.
-	spaced := groupNeedsSpacing(n, c.ctx)
+	// Inter-atom spacing comes from the TeX-style class table in
+	// spacing.go; measureGroup used the same gaps.
+	gaps := groupGaps(n.Children, c.ctx)
 	cx := x
 	for i, child := range n.Children {
 		cb := measure(child, c.ctx)
-		if spaced && isSpacedOp(child) && i > 0 && !isSpacedOp(n.Children[i-1]) {
-			cx++
-		}
-		if needsTextSpaceBefore(n.Children, i) {
-			cx++
-		}
-		if i > 0 && !hasTrailingGroupSpace(n.Children, i, spaced) &&
-			needsBarSeparator(n.Children[i-1], child) {
-			cx++ // collision guard: `-` adjacent to frac bar
-		}
+		cx += gaps[i]
 		dy := box.Baseline - cb.Baseline
 		renderNode(c, child, cx, y+dy)
 		cx += cb.Width
-		if spaced && isSpacedOp(child) && i > 0 && !isSpacedOp(n.Children[i-1]) {
-			cx++
-		}
 	}
 }
 
@@ -265,6 +283,35 @@ func renderFrac(c *canvas, n *node, x, y int) {
 	box := measure(n, c.ctx)
 	num := measure(n.Children[0], c.ctx)
 	den := measure(n.Children[1], c.ctx)
+
+	if fracFlat(n, c.ctx) {
+		dc := c.ctx.color(semDelim)
+		cx := x
+		wrapNum := flatFracWrap(n.Children[0], false)
+		wrapDen := flatFracWrap(n.Children[1], true)
+		if wrapNum {
+			c.setColored(cx, y, '(', dc)
+			cx++
+		}
+		renderNode(c, n.Children[0], cx, y)
+		cx += num.Width
+		if wrapNum {
+			c.setColored(cx, y, ')', dc)
+			cx++
+		}
+		c.setColored(cx, y, '/', c.ctx.color(semBar))
+		cx++
+		if wrapDen {
+			c.setColored(cx, y, '(', dc)
+			cx++
+		}
+		renderNode(c, n.Children[1], cx, y)
+		cx += den.Width
+		if wrapDen {
+			c.setColored(cx, y, ')', dc)
+		}
+		return
+	}
 
 	barY := y + num.Height
 	barW := box.Width
@@ -287,9 +334,23 @@ func renderFrac(c *canvas, n *node, x, y int) {
 func renderScript(c *canvas, n *node, x, y int) {
 	base, sub, sup := scriptParts(n)
 	bb := measure(base, c.ctx)
-	cs := c.ctx.withCompact()
+	cs := c.ctx.withScript()
 
-	if isBigOp(base) {
+	// paintBase draws the base at (bx, by), wrapped in parentheses when
+	// it is a flat fraction (see scriptBaseWrapped).
+	paintBase := renderNode
+	if scriptBaseWrapped(base, c.ctx) {
+		innerW := bb.Width
+		bb.Width += 2
+		paintBase = func(c *canvas, base *node, bx, by int) {
+			dc := c.ctx.color(semDelim)
+			c.setColored(bx, by, '(', dc)
+			renderNode(c, base, bx+1, by)
+			c.setColored(bx+1+innerW, by, ')', dc)
+		}
+	}
+
+	if stacksScripts(base, c.ctx) {
 		var subBox, supBox box
 		if sub != nil {
 			subBox = measure(sub, cs)
@@ -298,7 +359,7 @@ func renderScript(c *canvas, n *node, x, y int) {
 			supBox = measure(sup, cs)
 		}
 		contentW := max(bb.Width, max(subBox.Width, supBox.Width))
-		c.withCompactCtx(func() {
+		c.withScriptCtx(func() {
 			if sup != nil {
 				renderNode(c, sup, x+(contentW-supBox.Width)/2, y)
 			}
@@ -319,25 +380,34 @@ func renderScript(c *canvas, n *node, x, y int) {
 	if (sup != nil && sub == nil && supInline) ||
 		(sub != nil && sup == nil && subInline) ||
 		(sup != nil && sub != nil && supInline && subInline) {
-		renderNode(c, base, x, y)
+		paintBase(c, base, x, y)
 		cx := x + bb.Width
-		if sup != nil {
-			s := toSuperscript(sup)
-			c.putStrColored(cx, y, s, c.ctx.color(semNumber))
+		// Subscript first, then superscript: `aₙ²` reads as a_n squared.
+		if sub != nil {
+			s := toSubscript(sub)
+			c.putStrColored(cx, y, s, c.ctx.color(semVariable))
 			cx += displayWidth(s)
 		}
-		if sub != nil {
-			c.putStrColored(cx, y, toSubscript(sub), c.ctx.color(semVariable))
+		if sup != nil {
+			c.putStrColored(cx, y, toSuperscript(sup), c.ctx.color(semNumber))
 		}
+		return
+	}
+
+	if textualScripts(base, bb, sub, sup, c.ctx) {
+		paintBase(c, base, x, y)
+		cx := x + bb.Width
+		cx = paintTextualScript(c, sub, '_', subInline, cx, y)
+		paintTextualScript(c, sup, '^', supInline, cx, y)
 		return
 	}
 
 	// Stacked. Place the base on the script-aware baseline row.
 	box := measure(n, c.ctx)
 	baseY := y + box.Baseline - bb.Baseline
-	renderNode(c, base, x, baseY)
+	paintBase(c, base, x, baseY)
 
-	c.withCompactCtx(func() {
+	c.withScriptCtx(func() {
 		if sup != nil {
 			supBox := measure(sup, cs)
 			supY := baseY - supBox.Height
@@ -360,6 +430,41 @@ func renderScript(c *canvas, n *node, x, y int) {
 	})
 }
 
+// paintTextualScript paints one script of a textual script node at
+// (cx, y) and returns the column after it: the Unicode inline form when
+// available, else `_c` or `^{n→∞}` with the content in script style.
+func paintTextualScript(c *canvas, n *node, marker rune, inline bool, cx, y int) int {
+	if n == nil {
+		return cx
+	}
+	if inline {
+		var s string
+		if marker == '_' {
+			s = toSubscript(n)
+		} else {
+			s = toSuperscript(n)
+		}
+		c.putStrColored(cx, y, s, c.ctx.color(semVariable))
+		return cx + displayWidth(s)
+	}
+	w := measure(n, c.ctx.withScript()).Width
+	c.setColored(cx, y, marker, c.ctx.color(semOperator))
+	cx++
+	braced := w > 1
+	dc := c.ctx.color(semDelim)
+	if braced {
+		c.setColored(cx, y, '{', dc)
+		cx++
+	}
+	c.withScriptCtx(func() { renderNode(c, n, cx, y) })
+	cx += w
+	if braced {
+		c.setColored(cx, y, '}', dc)
+		cx++
+	}
+	return cx
+}
+
 func renderSqrt(c *canvas, n *node, x, y int) {
 	renderRadical(c, x, y, 0, n.Children[0])
 }
@@ -377,7 +482,7 @@ func renderNthRoot(c *canvas, n *node, x, y int) {
 		innerY = baseY
 	}
 
-	if canInlineSupRaw(n.Children[0], c.ctx) {
+	if canInlineSuperscript(n.Children[0], c.ctx) {
 		c.putStrColored(x, baseY, toSuperscript(n.Children[0]), c.ctx.color(semNumber))
 	} else {
 		idx := measure(n.Children[0], c.ctx)
@@ -387,8 +492,9 @@ func renderNthRoot(c *canvas, n *node, x, y int) {
 	renderRadical(c, x+nWidth, innerY, 0, n.Children[1])
 }
 
-// renderRadical paints `√(content)` at (x, y), using tall parens when
-// content has multiple rows. The √ sits on the content's baseline row.
+// renderRadical paints `√x`, `√(content)` or, for multi-row content,
+// √ with tall parens at (x, y). The √ sits on the content's baseline
+// row. See radicandBare for when the parens are dropped.
 func renderRadical(c *canvas, x, y, _ int, content *node) {
 	inner := measure(content, c.ctx)
 	dc := c.ctx.color(semDelim)
@@ -396,6 +502,10 @@ func renderRadical(c *canvas, x, y, _ int, content *node) {
 
 	if inner.Height <= 1 {
 		c.setColored(x, y, g.Sqrt, dc)
+		if radicandBare(content, c.ctx) {
+			renderNode(c, content, x+1, y)
+			return
+		}
 		c.setColored(x+1, y, '(', dc)
 		renderNode(c, content, x+2, y)
 		c.setColored(x+2+inner.Width, y, ')', dc)
@@ -429,7 +539,7 @@ func renderParen(c *canvas, n *node, x, y int) {
 	cx := x
 	if open != "" {
 		renderTallDelim(c, cx, y, inner.Height, open, delimColor)
-		cx++
+		cx += openW
 	}
 	renderNode(c, n.Children[0], cx, y)
 	cx += inner.Width
@@ -530,32 +640,7 @@ func renderMatrix(c *canvas, n *node, x, y int) {
 		}
 		return
 	}
-	nrows := len(n.Rows)
-	ncols := 0
-	for _, row := range n.Rows {
-		if len(row) > ncols {
-			ncols = len(row)
-		}
-	}
-
-	colWidths := make([]int, ncols)
-	rowHeights := make([]int, nrows)
-	rowBaselines := make([]int, nrows)
-	for i, row := range n.Rows {
-		rowHeights[i] = 1
-		for j, cell := range row {
-			b := measure(cell, c.ctx)
-			if b.Width > colWidths[j] {
-				colWidths[j] = b.Width
-			}
-			if b.Height > rowHeights[i] {
-				rowHeights[i] = b.Height
-			}
-			if b.Baseline > rowBaselines[i] {
-				rowBaselines[i] = b.Baseline
-			}
-		}
-	}
+	colWidths, rowHeights, rowBaselines := matrixGrid(n, c.ctx)
 
 	box := measure(n, c.ctx)
 	cx := x
@@ -569,24 +654,32 @@ func renderMatrix(c *canvas, n *node, x, y int) {
 		colX := cx
 		for j, cl := range row {
 			cb := measure(cl, c.ctx)
-			pad := (colWidths[j] - cb.Width) / 2
+			colX += matrixColGap(n, j)
+			var pad int
+			switch matrixColAlign(n, j) {
+			case 'l':
+				pad = 0
+			case 'r':
+				pad = colWidths[j] - cb.Width
+			default:
+				pad = (colWidths[j] - cb.Width) / 2
+			}
 			// Baseline-align each cell within its row so that a fraction
 			// and a plain symbol in the same row line up at the fraction
 			// bar rather than at the row's top.
 			cellY := ry + rowBaselines[i] - cb.Baseline
 			renderNode(c, cl, colX+pad, cellY)
-			colX += colWidths[j] + 2
+			colX += colWidths[j]
 		}
 		ry += rowHeights[i]
 	}
 
 	if close != "" {
-		// Last cell ended at cx + sum(cw+2) - 2 (no trailing gap after).
 		// Leave a 1-cell pad before the closing delim — matches the
 		// 1-cell pad after the opening delim and matches measureMatrix.
-		closeX := cx - 2
-		for _, cw := range colWidths {
-			closeX += cw + 2
+		closeX := cx
+		for j, cw := range colWidths {
+			closeX += matrixColGap(n, j) + cw
 		}
 		renderTallDelim(c, closeX+1, y, box.Height, close, delimColor)
 	}
@@ -597,12 +690,24 @@ func accentMark(g glyphs, kind string) rune {
 	switch kind {
 	case "dot":
 		return g.DotMark
-	case "ddot":
+	case "ddot", "dddot":
 		return g.DDotMark
 	case "tilde":
 		return g.TildeMark
 	case "vec":
 		return g.VecMark
+	case "bar":
+		return g.OverBar
+	case "breve":
+		return g.BreveMark
+	case "check":
+		return g.CheckMark
+	case "acute":
+		return g.AcuteMark
+	case "grave":
+		return g.GraveMark
+	case "ring":
+		return g.RingMark
 	default:
 		return g.HatMark
 	}
@@ -614,15 +719,65 @@ func accentMark(g glyphs, kind string) rune {
 func combiningAccentMark(kind string) rune {
 	switch kind {
 	case "dot":
-		return '\u0307' // ̇
+		return '̇'
 	case "ddot":
-		return '\u0308' // ̈
+		return '̈'
+	case "dddot":
+		return '⃛'
 	case "tilde":
-		return '\u0303' // ̃
+		return '̃'
 	case "vec":
-		return '\u20D7' // ⃗
+		return '⃗'
+	case "bar":
+		return '̄'
+	case "breve":
+		return '̆'
+	case "check":
+		return '̌'
+	case "acute":
+		return '́'
+	case "grave":
+		return '̀'
+	case "ring":
+		return '̊'
 	default:
-		return '\u0302' // ̂
+		return '̂'
+	}
+}
+
+// renderXArrow paints the label(s) and a stretched arrow:
+//
+//	  f
+//	────→
+func renderXArrow(c *canvas, n *node, x, y int) {
+	b := measure(n, c.ctx)
+	cs := c.ctx.withScript()
+	above := measure(n.Children[0], cs)
+	g := c.ctx.glyphs()
+	col := c.ctx.color(semOperator)
+
+	c.withScriptCtx(func() {
+		renderNode(c, n.Children[0], x+(b.Width-above.Width)/2, y)
+		if n.Children[1] != nil {
+			below := measure(n.Children[1], cs)
+			renderNode(c, n.Children[1], x+(b.Width-below.Width)/2, y+above.Height+1)
+		}
+	})
+
+	rowY := y + above.Height
+	c.hlineColored(x, rowY, b.Width, g.FracBar, col)
+	switch n.Value {
+	case "←", "⇐":
+		c.setColored(x, rowY, g.ArrowLeft, col)
+	case "↔":
+		c.setColored(x, rowY, g.ArrowLeft, col)
+		c.setColored(x+b.Width-1, rowY, g.ArrowRight, col)
+	default:
+		if c.ctx.ASCII {
+			c.setColored(x+b.Width-1, rowY, g.ArrowRight, col)
+		} else {
+			c.putStrColored(x+b.Width-1, rowY, n.Value, col)
+		}
 	}
 }
 
@@ -658,7 +813,25 @@ func wideAccentMark(g glyphs, kind string) rune {
 
 func renderOverline(c *canvas, n *node, x, y int) {
 	inner := measure(n.Children[0], c.ctx)
-	c.hlineColored(x, y, inner.Width, wideAccentMark(c.ctx.glyphs(), n.Value), c.ctx.color(semBar))
+	g := c.ctx.glyphs()
+	col := c.ctx.color(semBar)
+	switch n.Value {
+	case "rightarrow", "leftarrow", "leftrightarrow":
+		// \overrightarrow and friends: a rule with an arrow head.
+		c.hlineColored(x, y, inner.Width, g.FracBar, col)
+		if n.Value != "rightarrow" {
+			c.setColored(x, y, g.ArrowLeft, col)
+		}
+		if n.Value != "leftarrow" {
+			c.setColored(x+inner.Width-1, y, g.ArrowRight, col)
+		}
+	case "hat", "tilde":
+		// \widehat / \widetilde: one mark centered over the base reads
+		// better than a row of them.
+		c.setColored(x+inner.Width/2, y, wideAccentMark(g, n.Value), col)
+	default:
+		c.hlineColored(x, y, inner.Width, wideAccentMark(g, n.Value), col)
+	}
 	renderNode(c, n.Children[0], x, y+1)
 }
 
@@ -675,8 +848,13 @@ func renderHat(c *canvas, n *node, x, y int) {
 		return
 	}
 	inner := measure(n.Children[0], c.ctx)
-	hatX := x + inner.Width/2
-	c.set(hatX, y, accentMark(c.ctx.glyphs(), n.Value))
+	if n.Value == "bar" {
+		// A bar over a multi-cell base spans the whole base.
+		c.hlineColored(x, y, inner.Width, c.ctx.glyphs().OverBar, c.ctx.color(semBar))
+	} else {
+		hatX := x + inner.Width/2
+		c.set(hatX, y, accentMark(c.ctx.glyphs(), n.Value))
+	}
 	renderNode(c, n.Children[0], x, y+1)
 }
 

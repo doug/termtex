@@ -42,43 +42,42 @@ var subscriptMap = map[rune]rune{
 
 // canInlineScript reports whether n can be rendered as a sequence of
 // inline Unicode codepoints (single line, no stacking) using the given
-// rune map. isSuper picks the axis: true for superscript (allowing
-// `x^{y^z}` to flatten), false for subscript. ASCII mode and the
-// global stack override both force false.
-func canInlineScript(n *node, s renderCtx, m map[rune]rune, isSuper bool) bool {
-	if n == nil || s.ASCII || s.forceStackScripts {
+// rune map. Only flat runs of symbols, numbers and operators qualify;
+// a script that itself carries a script (`x^{y^z}`) stacks, since the
+// flattened form `xʸᶻ` would not show the nesting. ASCII mode never
+// inlines.
+//
+// Each script decides for itself: `T_c + T_h` renders `T` with a
+// stacked `c` next to an inline `Tₕ`, rather than forcing every
+// script in the expression to stack because one letter has no
+// subscript form.
+func canInlineScript(n *node, s renderCtx, m map[rune]rune) bool {
+	if n == nil || s.ASCII {
 		return false
 	}
 	switch n.Type {
 	case nodeSymbol, nodeNumber, nodeOperator:
 		return allMapped(n.Value, m)
 	case nodeGroup:
+		if len(n.Children) == 0 {
+			return false
+		}
 		for _, ch := range n.Children {
-			if !canInlineScript(ch, s, m, isSuper) {
+			if !canInlineScript(ch, s, m) {
 				return false
 			}
 		}
 		return true
-	case nodeScript:
-		base, sub, sup := scriptParts(n)
-		if isSuper {
-			return sub == nil && sup != nil &&
-				canInlineScript(base, s, m, isSuper) &&
-				canInlineScript(sup, s, m, isSuper)
-		}
-		return sup == nil && sub != nil &&
-			canInlineScript(base, s, m, isSuper) &&
-			canInlineScript(sub, s, m, isSuper)
 	}
 	return false
 }
 
 func canInlineSuperscript(n *node, s renderCtx) bool {
-	return canInlineScript(n, s, superscriptMap, true)
+	return canInlineScript(n, s, superscriptMap)
 }
 
 func canInlineSubscript(n *node, s renderCtx) bool {
-	return canInlineScript(n, s, subscriptMap, false)
+	return canInlineScript(n, s, subscriptMap)
 }
 
 func allMapped(s string, m map[rune]rune) bool {
@@ -90,105 +89,23 @@ func allMapped(s string, m map[rune]rune) bool {
 	return len(s) > 0
 }
 
-// toScript walks n applying m to leaf string values; nested nodeScript
-// nodes along the same axis (sup for isSuper=true, sub otherwise) are
-// flattened by concatenating base and script.
-func toScript(n *node, m map[rune]rune, isSuper bool) string {
+// toScript walks n applying m to leaf string values.
+func toScript(n *node, m map[rune]rune) string {
 	switch n.Type {
 	case nodeSymbol, nodeNumber, nodeOperator:
 		return mapRunes(n.Value, m)
 	case nodeGroup:
 		var s string
 		for _, ch := range n.Children {
-			s += toScript(ch, m, isSuper)
+			s += toScript(ch, m)
 		}
 		return s
-	case nodeScript:
-		base, sub, sup := scriptParts(n)
-		if isSuper && sup != nil {
-			return toScript(base, m, isSuper) + toScript(sup, m, isSuper)
-		}
-		if !isSuper && sub != nil {
-			return toScript(base, m, isSuper) + toScript(sub, m, isSuper)
-		}
 	}
 	return ""
 }
 
-func toSuperscript(n *node) string { return toScript(n, superscriptMap, true) }
-func toSubscript(n *node) string   { return toScript(n, subscriptMap, false) }
-
-// canInlineSupRaw is canInlineSuperscript ignoring forceStackScripts.
-// Used by callers (like nth-root indices) that always render via the
-// inline path regardless of the script consistency rule.
-func canInlineSupRaw(n *node, s renderCtx) bool {
-	s.forceStackScripts = false
-	return canInlineSuperscript(n, s)
-}
-
-// isSimpleScript reports whether a sub/superscript content is a single
-// atom or group of atoms — the kind that has a chance of inlining as
-// Unicode super/subscript characters. Complex scripts like fractions,
-// roots, or matrices are not "simple" and always stack regardless.
-func isSimpleScript(n *node) bool {
-	if n == nil {
-		return false
-	}
-	switch n.Type {
-	case nodeSymbol, nodeNumber, nodeOperator:
-		return true
-	case nodeGroup, nodeScript:
-		for _, ch := range n.Children {
-			if ch != nil && !isSimpleScript(ch) {
-				return false
-			}
-		}
-		return true
-	}
-	return false
-}
-
-// hasMixedSimpleScripts walks the AST and returns true if any "simple"
-// sub/superscript can't be rendered inline as a Unicode codepoint
-// (e.g. `T_c` — `c` has no Unicode subscript). When true, all simple
-// scripts are forced to stack so the rendering is uniform across the
-// expression rather than mixing `Tₕ` (inline) with stacked `T \n c`.
-func hasMixedSimpleScripts(n *node, s renderCtx) bool {
-	test := s
-	test.forceStackScripts = false
-
-	var walk func(*node) bool
-	walk = func(node *node) bool {
-		if node == nil {
-			return false
-		}
-		if node.Type == nodeScript {
-			base, sub, sup := scriptParts(node)
-			if !isBigOp(base) {
-				if sub != nil && isSimpleScript(sub) && !canInlineSubscript(sub, test) {
-					return true
-				}
-				if sup != nil && isSimpleScript(sup) && !canInlineSuperscript(sup, test) {
-					return true
-				}
-			}
-		}
-		for _, ch := range node.Children {
-			if ch != nil && walk(ch) {
-				return true
-			}
-		}
-		for _, row := range node.Rows {
-			for _, c := range row {
-				if walk(c) {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	return walk(n)
-}
+func toSuperscript(n *node) string { return toScript(n, superscriptMap) }
+func toSubscript(n *node) string   { return toScript(n, subscriptMap) }
 
 func mapRunes(s string, m map[rune]rune) string {
 	var out []rune

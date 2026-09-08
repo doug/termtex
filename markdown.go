@@ -19,7 +19,9 @@ func isEscaped(md string, i int) bool {
 // Expand scans markdown text for math delimiters and replaces
 // them with termtex-rendered output. Display math ($$...$$) becomes
 // fenced code blocks that glamour preserves verbatim. Inline math ($...$)
-// is rendered inline. Pass [Style]{} for the package default.
+// is rendered in text style (Style.Inline) so it stays on one row
+// wherever possible. Pass [Style]{} for the package default; the
+// Inline field is set per occurrence and ignored on input.
 //
 // The result can be passed to glamour or any other terminal markdown
 // renderer.
@@ -32,17 +34,29 @@ func isEscaped(md string, i int) bool {
 func Expand(md string, style Style) string {
 	// Sentinel: empty value cached on parse error so a malformed
 	// repeat-expression still costs only one lookup, not a re-parse.
-	cache := make(map[string]string)
-	tryRender := func(expr string) (string, bool) {
-		if r, ok := cache[expr]; ok {
+	// Inline and display renderings of the same expression differ, so
+	// the cache is keyed by both.
+	type key struct {
+		expr   string
+		inline bool
+	}
+	cache := make(map[key]string)
+	tryRender := func(expr string, inline bool) (string, bool) {
+		k := key{expr, inline}
+		if r, ok := cache[k]; ok {
 			return r, r != ""
 		}
-		r, err := Render(expr, style)
+		st := style
+		st.Inline = inline
+		if inline {
+			st.Width = 0 // inline math never breaks across rows
+		}
+		r, err := Render(expr, st)
 		if err != nil {
-			cache[expr] = ""
+			cache[k] = ""
 			return "", false
 		}
-		cache[expr] = r
+		cache[k] = r
 		return r, true
 	}
 
@@ -182,7 +196,7 @@ func Expand(md string, style Style) string {
 				i = end + 2
 				continue
 			}
-			rendered, ok := tryRender(expr)
+			rendered, ok := tryRender(expr, false)
 			if !ok {
 				sb.WriteString(md[i : end+2])
 				i = end + 2
@@ -214,7 +228,7 @@ func Expand(md string, style Style) string {
 			i++
 			continue
 		}
-		rendered, ok := tryRender(expr)
+		rendered, ok := tryRender(expr, true)
 		if !ok {
 			sb.WriteByte('$')
 			i++

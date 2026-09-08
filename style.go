@@ -16,6 +16,38 @@ type Style struct {
 	// characters for box drawing, fraction bars, sqrt, accents, etc.
 	// Useful for code comments, CI logs, or terminals lacking Unicode.
 	ASCII bool
+	// Inline typesets in TeX's text style rather than display style:
+	// fractions flatten to a/b, big-operator limits move to the side
+	// (∑ᵢ₌₁ⁿ instead of stacked), so simple expressions stay on one
+	// row and can sit inside a sentence. Use it for $...$ in markdown;
+	// leave it off for $$...$$.
+	Inline bool
+	// Width, when positive, is the maximum number of columns. An
+	// expression wider than this is broken into several rows, before
+	// relations (=, ≤, →) first and binary operators second, with
+	// continuation rows indented. Zero means never break.
+	Width int
+}
+
+// texStyle is TeX's notion of the current size context. Display and
+// text differ in how fractions and limits are laid out; script and
+// scriptscript additionally drop the optional inter-atom spaces so
+// `i=1` stays tight inside a limit.
+type texStyle uint8
+
+const (
+	styleDisplay texStyle = iota
+	styleText
+	styleScript
+	styleScriptScript
+)
+
+// script returns the style used for sub/superscripts of this style.
+func (m texStyle) script() texStyle {
+	if m >= styleScript {
+		return styleScriptScript
+	}
+	return styleScript
 }
 
 // renderCtx bundles user-facing [Style] options with derived runtime
@@ -24,29 +56,47 @@ type Style struct {
 // public API.
 type renderCtx struct {
 	Style
-	// forceStackScripts disables inline Unicode super/subscripts so all
-	// scripts in a single render pass stack uniformly. Set by
-	// renderTree when any script in the AST cannot be inlined,
-	// to avoid mixing inline (`Tₕ`) and stacked (`T \n c`) forms in the
-	// same expression.
-	forceStackScripts bool
-	// compact is set when rendering script content (sub/sup, big-op
-	// limits) where operator spacing should be suppressed (e.g. `i=1`
-	// instead of `i = 1`). Replaces the older structural heuristic in
-	// groupNeedsSpacing.
-	compact bool
+	// style is the current math style. Render starts in display (or
+	// text, for Style.Inline) and the script paths step it down.
+	style texStyle
 }
 
-// withCompact returns a copy of the context with compact=true.
-func (c renderCtx) withCompact() renderCtx {
-	c.compact = true
+// withScript returns a copy of the context in the script style of the
+// current one — used for sub/superscripts and big-operator limits.
+func (c renderCtx) withScript() renderCtx {
+	c.style = c.style.script()
 	return c
+}
+
+// withStyle returns a copy of the context in the given style.
+func (c renderCtx) withStyle(st texStyle) renderCtx {
+	c.style = st
+	return c
+}
+
+// styleSwitches maps the TeX style-switch commands to the style they
+// select for the remainder of the enclosing list.
+var styleSwitches = map[string]texStyle{
+	"displaystyle":      styleDisplay,
+	"textstyle":         styleText,
+	"scriptstyle":       styleScript,
+	"scriptscriptstyle": styleScriptScript,
+}
+
+// compact reports whether optional inter-atom spacing is suppressed
+// (script and scriptscript styles).
+func (c renderCtx) compact() bool {
+	return c.style >= styleScript
 }
 
 // newRenderCtx wraps a [Style] in a fresh render context with no
 // derived state set. Measurement memoization lives on the AST node.
 func newRenderCtx(s Style) renderCtx {
-	return renderCtx{Style: s}
+	ctx := renderCtx{Style: s}
+	if s.Inline {
+		ctx.style = styleText
+	}
+	return ctx
 }
 
 // displayValue returns v as it should appear in output for this style:
@@ -126,8 +176,13 @@ type glyphs struct {
 	BraceLT, BraceLM, BraceLE, BraceLB rune // ⎧ ⎨ ⎪ ⎩
 	BraceRT, BraceRM, BraceRE, BraceRB rune // ⎫ ⎬ ⎪ ⎭
 
-	// Single-cell accent marks for \hat, \dot, \ddot, \tilde, \vec.
-	HatMark, DotMark, DDotMark, TildeMark, VecMark rune
+	// Single-cell accent marks for \hat, \dot, \ddot, \tilde, \vec,
+	// \breve, \check, \acute, \grave, \mathring.
+	HatMark, DotMark, DDotMark, TildeMark, VecMark       rune
+	BreveMark, CheckMark, AcuteMark, GraveMark, RingMark rune
+
+	// Arrow heads for \overrightarrow / \overleftarrow.
+	ArrowLeft, ArrowRight rune
 
 	// Overbrace / underbrace decorations.
 	OverbraceLeft, OverbraceMid, OverbraceRight    rune // ╭ ┴ ╮
@@ -156,6 +211,14 @@ var unicodeGlyphs = glyphs{
 	DDotMark:  '¨',
 	TildeMark: '~',
 	VecMark:   '→',
+	BreveMark: '˘',
+	CheckMark: 'ˇ',
+	AcuteMark: '´',
+	GraveMark: '`',
+	RingMark:  '˚',
+
+	ArrowLeft:  '←',
+	ArrowRight: '→',
 
 	OverbraceLeft:   '╭',
 	OverbraceMid:    '┴',
@@ -187,6 +250,14 @@ var asciiGlyphs = glyphs{
 	DDotMark:  ':',
 	TildeMark: '~',
 	VecMark:   '>',
+	BreveMark: 'u',
+	CheckMark: 'v',
+	AcuteMark: '\'',
+	GraveMark: '`',
+	RingMark:  'o',
+
+	ArrowLeft:  '<',
+	ArrowRight: '>',
 
 	OverbraceLeft:   '+',
 	OverbraceMid:    '^',

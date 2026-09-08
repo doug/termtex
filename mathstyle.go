@@ -10,6 +10,33 @@ import "strings"
 type mathStyle struct {
 	upper, lower, digit rune
 	overrides           map[rune]rune
+	// Greek bases (0 = unsupported): the Mathematical Greek blocks are
+	// laid out as 25 capitals (Α…Ω with ϴ in the final-sigma slot),
+	// ∇, 25 lowercase (α…ω including ς), ∂, then ϵ ϑ ϰ ϕ ϱ ϖ.
+	gUpper, gLower rune
+}
+
+// greekBlockSize is the stride between styled Greek blocks.
+const greekBlockSize = 58
+
+// mathGreekToPlain maps a styled Greek letter (bold, italic, …) back to
+// its plain codepoint, or 0 if r is not in the styled Greek range.
+func mathGreekToPlain(r rune) rune {
+	if r < 0x1D6A8 || r > 0x1D7CB {
+		return 0
+	}
+	idx := int(r-0x1D6A8) % greekBlockSize
+	switch {
+	case idx < 25:
+		return 0x391 + rune(idx)
+	case idx == 25:
+		return '∇'
+	case idx < 51:
+		return 0x3B1 + rune(idx-26)
+	case idx == 51:
+		return '∂'
+	}
+	return []rune("ϵϑϰϕϱϖ")[idx-52]
 }
 
 var (
@@ -31,12 +58,29 @@ var (
 )
 
 var mathStyles = map[string]mathStyle{
-	"bold":         {0x1D400, 0x1D41A, 0x1D7CE, nil},
-	"italic":       {0x1D434, 0x1D44E, 0, italicOverrides},
-	"doubleStruck": {0x1D538, 0x1D552, 0x1D7D8, doubleStruckOverrides},
-	"script":       {0x1D49C, 0x1D4B6, 0, scriptOverrides},
-	"fraktur":      {0x1D504, 0x1D51E, 0, frakturOverrides},
-	"sansSerif":    {0x1D5A0, 0x1D5BA, 0x1D7E2, nil},
+	"bold":         {0x1D400, 0x1D41A, 0x1D7CE, nil, 0x1D6A8, 0x1D6C2},
+	"italic":       {0x1D434, 0x1D44E, 0, italicOverrides, 0x1D6E2, 0x1D6FC},
+	"doubleStruck": {0x1D538, 0x1D552, 0x1D7D8, doubleStruckOverrides, 0, 0},
+	"script":       {0x1D49C, 0x1D4B6, 0, scriptOverrides, 0, 0},
+	"fraktur":      {0x1D504, 0x1D51E, 0, frakturOverrides, 0, 0},
+	"sansSerif":    {0x1D5A0, 0x1D5BA, 0x1D7E2, nil, 0, 0},
+	"monospace":    {0x1D670, 0x1D68A, 0x1D7F6, nil, 0, 0},
+}
+
+// mathCancel and mathStrike overlay a combining long solidus (\cancel)
+// or long stroke (\sout) on every rune; both are zero-width in the
+// grid so the box does not change.
+func mathCancel(s string) string { return overlay(s, '̸') }
+func mathStrike(s string) string { return overlay(s, '̶') }
+
+func overlay(s string, mark rune) string {
+	var sb strings.Builder
+	sb.Grow(len(s) * 3)
+	for _, r := range s {
+		sb.WriteRune(r)
+		sb.WriteRune(mark)
+	}
+	return sb.String()
 }
 
 // transform applies the style to s, emitting the styled codepoint for
@@ -56,6 +100,10 @@ func (st mathStyle) transform(s string) string {
 			sb.WriteRune(st.lower + (r - 'a'))
 		case st.digit != 0 && r >= '0' && r <= '9':
 			sb.WriteRune(st.digit + (r - '0'))
+		case st.gUpper != 0 && r >= 0x391 && r <= 0x3A9 && r != 0x3A2:
+			sb.WriteRune(st.gUpper + (r - 0x391))
+		case st.gLower != 0 && r >= 0x3B1 && r <= 0x3C9:
+			sb.WriteRune(st.gLower + (r - 0x3B1))
 		default:
 			sb.WriteRune(r)
 		}
@@ -69,6 +117,7 @@ func mathDoubleStruck(s string) string { return mathStyles["doubleStruck"].trans
 func mathScript(s string) string       { return mathStyles["script"].transform(s) }
 func mathFraktur(s string) string      { return mathStyles["fraktur"].transform(s) }
 func mathSansSerif(s string) string    { return mathStyles["sansSerif"].transform(s) }
+func mathMonospace(s string) string    { return mathStyles["monospace"].transform(s) }
 
 // applyMathStyle walks n in place, applying transform to the Value of
 // every nodeSymbol and nodeNumber. The caller is parseMathStyle, which
