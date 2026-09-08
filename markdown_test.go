@@ -150,3 +150,67 @@ func TestExpandMathInsideCodeBlocksUnchanged(t *testing.T) {
 		})
 	}
 }
+
+func TestExpandTildeInProse(t *testing.T) {
+	cases := []struct {
+		name     string
+		in       string
+		wantMath string
+	}{
+		{
+			name:     "single tilde approximation before math",
+			in:       "Completed ~1,110 tasks, speed is $a^2 + b^2$.",
+			wantMath: "a² + b²",
+		},
+		{
+			name:     "tilde range before math",
+			in:       "Between ~10 and ~20 items: $a^2$.",
+			wantMath: "a²",
+		},
+		{
+			name:     "strikethrough containing math",
+			in:       "Old value: ~~$a^2$~~, new value: $b^2$.",
+			wantMath: "a²",
+		},
+		{
+			name:     "tilde fence with comment inside not closing prematurely",
+			in:       "~~~\n~~~ not a closer\nx := $a^2$\n~~~\nAfter $a^2$.",
+			wantMath: "a²",
+		},
+		{
+			name:     "indented tilde fence up to 3 spaces",
+			in:       "   ~~~\n   x := $a^2$\n   ~~~\nAfter $a^2$.",
+			wantMath: "a²",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := Expand(tc.in, Style{})
+			if !strings.Contains(out, tc.wantMath) {
+				t.Errorf("expected math %q in output, got:\n%s", tc.wantMath, out)
+			}
+			if tc.name == "tilde fence with comment inside not closing prematurely" {
+				if !strings.Contains(out, "$a^2$") {
+					t.Errorf("expected $a^2$ inside code block to remain unexpanded, got:\n%s", out)
+				}
+			}
+			if tc.name == "indented tilde fence up to 3 spaces" {
+				if !strings.Contains(out, "$a^2$") {
+					t.Errorf("expected $a^2$ inside code block to remain unexpanded, got:\n%s", out)
+				}
+			}
+		})
+	}
+}
+
+func TestExpandPreservesUnparseableMathVerbatim(t *testing.T) {
+	// If parsing fails (for example, due to unconsumed tokens like an unmatched \end),
+	// Expand must preserve the raw math expression verbatim rather than emitting
+	// a silently truncated fragment.
+	in := "Before $$x \\end{aligned} y$$ After"
+	out := Expand(in, Style{})
+	if out != in {
+		t.Errorf("Expand should preserve unparseable math verbatim:\ngot:  %q\nwant: %q", out, in)
+	}
+}
