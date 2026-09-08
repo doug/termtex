@@ -16,6 +16,39 @@ func isEscaped(md string, i int) bool {
 	return n%2 == 1
 }
 
+// isFenceLineStart reports whether pos is at the start of a line (or indented
+// by at most 3 spaces), matching CommonMark fenced code block rules.
+func isFenceLineStart(md string, pos int) bool {
+	spaces := 0
+	for k := pos - 1; k >= 0; k-- {
+		if md[k] == '\n' || md[k] == '\r' {
+			return true
+		}
+		if md[k] != ' ' {
+			return false
+		}
+		spaces++
+		if spaces > 3 {
+			return false
+		}
+	}
+	return true
+}
+
+// isFenceLineEnd reports whether pos is followed only by optional spaces/tabs
+// until the end of the line or end of string, matching CommonMark closing fence rules.
+func isFenceLineEnd(md string, pos int) bool {
+	for k := pos; k < len(md); k++ {
+		if md[k] == '\n' || md[k] == '\r' {
+			return true
+		}
+		if md[k] != ' ' && md[k] != '\t' {
+			return false
+		}
+	}
+	return true
+}
+
 // Expand scans markdown text for math delimiters and replaces
 // them with termtex-rendered output. Display math ($$...$$) becomes
 // fenced code blocks that glamour preserves verbatim. Inline math ($...$)
@@ -65,6 +98,7 @@ func Expand(md string, style Style) string {
 	i := 0
 	n := len(md)
 	inCode := false
+	isFencedCode := false
 	codeOpenerLength := 0
 	codeOpenerChar := byte(0)
 	htmlCloser := ""
@@ -87,7 +121,15 @@ func Expand(md string, style Style) string {
 				j++
 			}
 			sb.WriteString(md[runStart:j])
-			if runLen == codeOpenerLength {
+			if isFencedCode {
+				// CommonMark §4.5: closing fence must have at least as many
+				// characters as the opener, be indented <= 3 spaces, and be
+				// followed only by spaces until newline or EOF.
+				if runLen >= codeOpenerLength && isFenceLineStart(md, runStart) && isFenceLineEnd(md, j) {
+					inCode = false
+					isFencedCode = false
+				}
+			} else if runLen == codeOpenerLength {
 				inCode = false
 			}
 			i = j
@@ -131,10 +173,10 @@ func Expand(md string, style Style) string {
 		}
 		i = j
 
-		if char == '`' || char == '~' {
+		if char == '`' {
 			runStart := i
 			runLen := 0
-			for i < n && md[i] == char {
+			for i < n && md[i] == '`' {
 				runLen++
 				i++
 			}
@@ -144,7 +186,37 @@ func Expand(md string, style Style) string {
 			}
 			inCode = true
 			codeOpenerLength = runLen
-			codeOpenerChar = char
+			codeOpenerChar = '`'
+			isFencedCode = runLen >= 3 && isFenceLineStart(md, runStart)
+			sb.WriteString(md[runStart:i])
+			continue
+		}
+
+		if char == '~' {
+			runStart := i
+			runLen := 0
+			for i < n && md[i] == '~' {
+				runLen++
+				i++
+			}
+			// In CommonMark, tildes only open fenced code blocks (>= 3 tildes at line start).
+			// Single/double tildes in prose (~1,000, ~~strike~~) are never code openers.
+			if !isEscaped(md, runStart) && runLen >= 3 && isFenceLineStart(md, runStart) {
+				// CommonMark §4.5: info strings for tilde blocks cannot contain tildes.
+				hasTildeInInfo := false
+				for k := i; k < n && md[k] != '\n' && md[k] != '\r'; k++ {
+					if md[k] == '~' {
+						hasTildeInInfo = true
+						break
+					}
+				}
+				if !hasTildeInInfo {
+					inCode = true
+					isFencedCode = true
+					codeOpenerLength = runLen
+					codeOpenerChar = '~'
+				}
+			}
 			sb.WriteString(md[runStart:i])
 			continue
 		}

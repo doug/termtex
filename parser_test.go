@@ -137,3 +137,20 @@ func TestPipeAsAbsValue(t *testing.T) {
 		t.Errorf("|x| should render as |x|, got %q", got)
 	}
 }
+
+// TestUnconsumedTokensError verifies that incomplete expressions with
+// dangling tokens (e.g. unmatched \end or closing delimiters) return an error
+// instead of silently succeeding with a truncated AST.
+func TestUnconsumedTokensError(t *testing.T) {
+	inputs := []string{
+		`x \end{aligned}`,
+		`x } y`,
+		`x ] y`,
+	}
+	for _, in := range inputs {
+		_, err := parse(in)
+		if err == nil {
+			t.Errorf("parse(%q) expected error for unconsumed tokens, got nil", in)
+		}
+	}
+}

@@ -345,10 +345,16 @@ func parse(input string) (*node, error) {
 	tp := lex(input)
 	p := &parser{tokens: *tp}
 	node, err := p.parseRows()
-	releaseTokens(tp)
 	if err != nil {
+		releaseTokens(tp)
 		return nil, err
 	}
+	if p.peek().typ != tokEOF {
+		t := p.peek()
+		releaseTokens(tp)
+		return nil, fmt.Errorf("unexpected token %q at position %d", t.val, p.pos)
+	}
+	releaseTokens(tp)
 	return node, nil
 }
 
