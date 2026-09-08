@@ -566,6 +566,14 @@ func pickTallParts(delim string, g glyphs) (tallParts, bool) {
 		return tallParts{g.BrackLT, g.BrackLM, g.BrackLB}, true
 	case "]":
 		return tallParts{g.BrackRT, g.BrackRM, g.BrackRB}, true
+	case "⌈":
+		return tallParts{g.BrackLT, g.VBar, g.VBar}, true
+	case "⌉":
+		return tallParts{g.BrackRT, g.VBar, g.VBar}, true
+	case "⌊":
+		return tallParts{g.VBar, g.VBar, g.BrackLB}, true
+	case "⌋":
+		return tallParts{g.VBar, g.VBar, g.BrackRB}, true
 	}
 	return tallParts{}, false
 }

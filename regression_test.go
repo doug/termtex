@@ -124,3 +124,45 @@ func TestRegressionOperatorPostfixError(t *testing.T) {
 		t.Errorf("operator with postfix script should be a parse error")
 	}
 }
+
+func TestRegressionCeilFloorDelimiters(t *testing.T) {
+	// Tall ceiling brackets use BrackLT (⎡) on top and VBar (│) below.
+	gotCeil, err := Render(`\left\lceil \frac{a}{b} \right\rceil`, Style{})
+	if err != nil {
+		t.Fatalf("Render ceiling error: %v", err)
+	}
+	for _, want := range []string{"⎡", "⎤", "│", "a", "b", "─"} {
+		if !strings.Contains(gotCeil, want) {
+			t.Errorf("tall ceiling missing %q in:\n%s", want, gotCeil)
+		}
+	}
+
+	// Tall floor brackets use VBar (│) on top and BrackLB (⎣) below.
+	gotFloor, err := Render(`\left\lfloor \frac{a}{b} \right\rfloor`, Style{})
+	if err != nil {
+		t.Fatalf("Render floor error: %v", err)
+	}
+	for _, want := range []string{"⎣", "⎦", "│", "a", "b", "─"} {
+		if !strings.Contains(gotFloor, want) {
+			t.Errorf("tall floor missing %q in:\n%s", want, gotFloor)
+		}
+	}
+
+	// Single-line delimiters
+	gotInline, err := Render(`\left\lceil x \right\rceil + \left\lfloor y \right\rfloor`, Style{})
+	if err != nil {
+		t.Fatalf("Render inline error: %v", err)
+	}
+	if !strings.Contains(gotInline, "⌈x⌉") || !strings.Contains(gotInline, "⌊y⌋") {
+		t.Errorf("inline ceiling/floor missing expected delimiters in:\n%s", gotInline)
+	}
+
+	// ASCII mode degradation
+	gotASCII, err := Render(`\left\lceil \frac{a}{b} \right\rceil`, Style{ASCII: true})
+	if err != nil {
+		t.Fatalf("Render ASCII error: %v", err)
+	}
+	if strings.Contains(gotASCII, "?") {
+		t.Errorf("ASCII render contained '?' replacement:\n%s", gotASCII)
+	}
+}
