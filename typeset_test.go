@@ -158,6 +158,8 @@ func TestTextualScripts(t *testing.T) {
 		{`e^{-\frac{x^2}{2}}`, "e^{-x²/2}"},
 		{`\lim_{n\to\infty} a_n`, "lim_{n→∞} aₙ"},
 		{`\sum_{p \text{ prime}} p`, "∑_{p prime} p"},
+		{`15^\circ`, "15°"},
+		{`15^{\degree}`, "15°"},
 	}
 	for _, c := range cases {
 		if got := render(t, c.in, inline); got != c.want {
