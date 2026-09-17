@@ -24,6 +24,8 @@ var superscriptMap = map[rune]rune{
 	'α': 'ᵅ', 'β': 'ᵝ', 'γ': 'ᵞ', 'δ': 'ᵟ', 'θ': 'ᶿ',
 	'φ': 'ᵠ', 'χ': 'ᵡ',
 	// special
+	'∘': '°', // e.g. 15^\circ -> degree sign
+	'°': '°', // degree is already a superscript glyph
 	'′': '′', // prime is already a superscript glyph
 }
 
